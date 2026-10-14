@@ -1,0 +1,177 @@
+"""Windows input injection via SendInput (mouse + Unicode keyboard)."""
+import ctypes
+from ctypes import wintypes
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x1000
+
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+
+ULONG_PTR = ctypes.c_size_t
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ULONG_PTR)]
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ULONG_PTR)]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+user32.SendInput.restype = wintypes.UINT
+
+
+def _send(inputs):
+    if not inputs:
+        return
+    arr = (INPUT * len(inputs))(*inputs)
+    user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
+
+
+def _mouse(flags, dx=0, dy=0, data=0):
+    inp = INPUT(type=INPUT_MOUSE)
+    inp.mi = MOUSEINPUT(dx, dy, ctypes.c_ulong(data & 0xFFFFFFFF).value, flags, 0, 0)
+    return inp
+
+
+def _key(vk=0, scan=0, flags=0):
+    inp = INPUT(type=INPUT_KEYBOARD)
+    inp.ki = KEYBDINPUT(vk, scan, flags, 0, 0)
+    return inp
+
+
+# ---------------- mouse ----------------
+
+def move(dx: int, dy: int):
+    _send([_mouse(MOUSEEVENTF_MOVE, int(dx), int(dy))])
+
+
+def cursor_pos() -> tuple[int, int]:
+    pt = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+def move_to(x: int, y: int):
+    """Absolute position in virtual-screen pixels (same coordinates as screen capture)."""
+    user32.SetCursorPos(int(x), int(y))
+
+
+def enable_precise_timers():
+    """Windows timers default to ~15.6 ms ticks, which caps smooth 30 fps streaming."""
+    try:
+        ctypes.WinDLL("winmm").timeBeginPeriod(1)
+    except (AttributeError, OSError):
+        pass
+
+
+def enable_dpi_awareness():
+    """Use real pixels everywhere so cursor position and screen capture line up on scaled displays."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor aware
+    except (AttributeError, OSError):
+        try:
+            user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass
+
+
+_BUTTONS = {
+    "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+    "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+    "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+}
+
+
+def button(name: str, action: str):
+    """action: 'down' | 'up' | 'click'"""
+    down, up = _BUTTONS.get(name, _BUTTONS["left"])
+    if action == "down":
+        _send([_mouse(down)])
+    elif action == "up":
+        _send([_mouse(up)])
+    else:
+        _send([_mouse(down), _mouse(up)])
+
+
+def scroll(dx: int, dy: int):
+    """Wheel deltas in Windows units (120 = one notch). Positive dy scrolls up."""
+    inputs = []
+    if dy:
+        inputs.append(_mouse(MOUSEEVENTF_WHEEL, data=int(dy)))
+    if dx:
+        inputs.append(_mouse(MOUSEEVENTF_HWHEEL, data=int(dx)))
+    _send(inputs)
+
+
+# ---------------- keyboard ----------------
+
+VK = {
+    "enter": 0x0D, "backspace": 0x08, "tab": 0x09, "escape": 0x1B, "space": 0x20,
+    "delete": 0x2E, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "home": 0x24, "end": 0x23, "ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B,
+    "a": 0x41, "c": 0x43, "v": 0x56, "x": 0x58, "z": 0x5A, "y": 0x59,
+}
+_EXTENDED = {0x2E, 0x25, 0x26, 0x27, 0x28, 0x24, 0x23, 0x5B}
+KEYEVENTF_EXTENDEDKEY = 0x0001
+
+
+def _vk_event(vk, up=False):
+    flags = (KEYEVENTF_KEYUP if up else 0) | (KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED else 0)
+    return _key(vk=vk, flags=flags)
+
+
+def hotkey(combo: str):
+    """e.g. 'enter', 'ctrl+z', 'ctrl+backspace'."""
+    vks = [VK[k] for k in combo.lower().split("+") if k in VK]
+    if not vks:
+        return
+    _send([_vk_event(v) for v in vks] + [_vk_event(v, up=True) for v in reversed(vks)])
+
+
+def type_text(text: str):
+    """Type arbitrary Unicode (Devanagari, emoji, ...) into the focused window."""
+    inputs = []
+    for ch in text:
+        if ch == "\n":
+            inputs += [_vk_event(VK["enter"]), _vk_event(VK["enter"], up=True)]
+            continue
+        if ch == "\r":
+            continue
+        data = ch.encode("utf-16-le")
+        units = [int.from_bytes(data[i:i + 2], "little") for i in range(0, len(data), 2)]
+        for u in units:  # surrogate pairs are sent as two units
+            inputs.append(_key(scan=u, flags=KEYEVENTF_UNICODE))
+            inputs.append(_key(scan=u, flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
+    # Send in chunks so very long dictations don't overflow the input queue
+    for i in range(0, len(inputs), 200):
+        _send(inputs[i:i + 200])

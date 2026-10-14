@@ -1,0 +1,6 @@
+.venv/
+.venv-mac/
+data/
+dist/
+packaging/build/
+__pycache__/

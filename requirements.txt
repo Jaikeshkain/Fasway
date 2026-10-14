@@ -1,0 +1,10 @@
+aiohttp>=3.9
+cryptography>=42
+qrcode>=7.4
+pillow>=10
+aiortc>=1.9
+mss>=9
+numpy>=1.26
+dxcam>=0.0.5; sys_platform == "win32"
+pyobjc-framework-Quartz>=10; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices>=10; sys_platform == "darwin"
