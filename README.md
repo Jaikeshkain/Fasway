@@ -49,6 +49,16 @@ Tap **🖥** in the top bar to show the laptop screen, with its cursor, above th
 - Windows uses fast GPU capture (Desktop Duplication).
 - On **Mac**, allow **Screen Recording** for Fasway (or Terminal) in System Settings → Privacy & Security. Without it, the preview shows only the wallpaper.
 
+## Keyboard
+Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter appears on the laptop **live**, wherever the cursor is.
+- **Works with any phone keyboard:** Gboard autocorrect and suggestions, swipe typing, Hindi keyboards, emoji, and the keyboard's own mic. When autocorrect changes a word on the phone, the laptop gets the same fix.
+- **Special keys:** Esc, Tab, arrows, ⌫, Del, Home, End, PgUp, PgDn, Enter, F1–F12, Ins, PrtSc. Hold the arrows, ⌫ and Del to repeat them.
+- **Modifier keys:** **Ctrl / Alt / Shift / Win**. On a Mac these show as **⌘ Cmd** and **⌥ Opt**.
+  - Tap once to apply to the **next key only**; tap twice to **lock** it on (underlined); tap again to turn it off.
+  - Examples: Ctrl, then type `c` → Ctrl+C. Shift, then ← → select text. Win, then type `d` → show desktop.
+- **Shortcut buttons:** Copy, Paste, Cut, Undo, Redo, Select all, Save, Find. They use Ctrl on Windows and ⌘ on Mac.
+- **Screen preview:** shown above the keyboard too (🖥), so you can watch what you type. While the phone keyboard is open, the bottom tabs hide to make room.
+
 ## Voice typing
 Click into any text field on the laptop, open the **Voice** tab, tap the mic and speak. The text is typed wherever the cursor is.
 

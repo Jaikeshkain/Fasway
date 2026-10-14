@@ -61,6 +61,7 @@ class FaswayServer:
         self.on_clients(len(self.clients))
         log.info("phone connected from %s", request.remote)
         sess = {"pc": None, "track": None}
+        await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win"}))
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -134,6 +135,12 @@ class FaswayServer:
             inp.button(m.get("b", "left"), m.get("a", "click"))
         elif t == "txt":
             text = str(m.get("v", ""))[:10000]
+            if text:
+                inp.type_text(text)
+        elif t == "edit":  # live keyboard: undo `del` characters, then type `ins`
+            if m.get("del"):
+                inp.delete_back(int(m["del"]))
+            text = str(m.get("ins", ""))[:10000]
             if text:
                 inp.type_text(text)
         elif t == "key":

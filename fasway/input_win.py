@@ -137,12 +137,28 @@ def scroll(dx: int, dy: int):
 
 VK = {
     "enter": 0x0D, "backspace": 0x08, "tab": 0x09, "escape": 0x1B, "space": 0x20,
-    "delete": 0x2E, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
-    "home": 0x24, "end": 0x23, "ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B,
-    "a": 0x41, "c": 0x43, "v": 0x56, "x": 0x58, "z": 0x5A, "y": 0x59,
+    "delete": 0x2E, "insert": 0x2D, "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22, "printscreen": 0x2C,
+    "capslock": 0x14, "menu": 0x5D,
+    "ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B,
+    **{f"f{i}": 0x6F + i for i in range(1, 13)},  # F1 = 0x70
 }
-_EXTENDED = {0x2E, 0x25, 0x26, 0x27, 0x28, 0x24, 0x23, 0x5B}
+ALIASES = {"mod": "ctrl", "cmd": "win", "meta": "win", "option": "alt", "esc": "escape", "del": "delete"}
+_EXTENDED = {0x2E, 0x2D, 0x25, 0x26, 0x27, 0x28, 0x24, 0x23, 0x21, 0x22, 0x2C, 0x5B, 0x5D}
 KEYEVENTF_EXTENDEDKEY = 0x0001
+user32.VkKeyScanW.argtypes = (wintypes.WCHAR,)
+user32.VkKeyScanW.restype = ctypes.c_short
+
+
+def _vk_for(name: str):
+    name = ALIASES.get(name, name)
+    if name in VK:
+        return VK[name]
+    if len(name) == 1:  # letters, digits, punctuation on the current keyboard layout
+        r = user32.VkKeyScanW(name)
+        if r != -1 and (r & 0xFF) != 0xFF:
+            return r & 0xFF
+    return None
 
 
 def _vk_event(vk, up=False):
@@ -151,11 +167,19 @@ def _vk_event(vk, up=False):
 
 
 def hotkey(combo: str):
-    """e.g. 'enter', 'ctrl+z', 'ctrl+backspace'."""
-    vks = [VK[k] for k in combo.lower().split("+") if k in VK]
-    if not vks:
+    """e.g. 'enter', 'ctrl+z', 'ctrl+shift+left', 'win+d', 'f5'. 'mod' = Ctrl on Windows."""
+    combo = combo.lower()
+    parts = ["+"] if combo == "+" else combo.split("+")
+    vks = [_vk_for(k) for k in parts]
+    if not vks or None in vks:
         return
     _send([_vk_event(v) for v in vks] + [_vk_event(v, up=True) for v in reversed(vks)])
+
+
+def delete_back(n: int):
+    n = max(0, min(int(n), 2000))
+    for i in range(0, n, 100):
+        _send([e for _ in range(min(100, n - i)) for e in (_vk_event(0x08), _vk_event(0x08, up=True))])
 
 
 def type_text(text: str):

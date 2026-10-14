@@ -45,6 +45,29 @@ main { flex: 1; min-height: 0; position: relative; }
 .icon-btn.on { color: var(--accent); }
 #pad { min-height: 140px; }
 
+.screen-slot { display: contents; }
+/* Keyboard tab: always the compact 16:9 preview, shrinking when the phone keyboard needs room */
+#tab-kbd .screen, #tab-kbd .screen.large { aspect-ratio: 16 / 9; height: auto; max-height: 34vh; flex: 0 1 auto; min-height: 0; }
+#tab-kbd .screen-size { display: none; }
+
+/* Keyboard */
+#tab-kbd { gap: 8px; }
+.kbd-input-row { position: relative; flex-shrink: 0; }
+#kbdInput { width: 100%; font: inherit; font-size: 18px; color: var(--text); background: var(--panel);
+  border: 1px solid #2a2f3a; border-radius: 12px; padding: 12px 14px; outline: none; user-select: text; -webkit-user-select: text; }
+#kbdInput:focus { border-color: var(--accent); }
+.kbd-hint { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: var(--muted);
+  font-size: 14px; pointer-events: none; }
+.kbd-row { display: flex; gap: 6px; flex-shrink: 0; }
+.kbd-row button { flex: 1; padding: 10px 2px; font-size: 14px; min-width: 0; touch-action: manipulation; }
+.kbd-row.scroll { overflow-x: auto; scrollbar-width: none; }
+.kbd-row.scroll::-webkit-scrollbar { display: none; }
+.kbd-row.scroll button { flex: 0 0 auto; padding: 10px 14px; }
+.kbd-row.shortcuts button { background: #1f2a40; }
+.kbd-row button.mod-once { background: var(--accent); }
+.kbd-row button.mod-lock { background: var(--accent); box-shadow: inset 0 -3px 0 #fff; }
+body.kbd-open nav { display: none; }   /* phone keyboard is up: give the space to the screen */
+
 /* Voice */
 .lang-row { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
 .lang-row label { color: var(--muted); font-size: 13px; }

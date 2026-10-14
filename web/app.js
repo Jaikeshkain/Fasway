@@ -40,6 +40,7 @@
     ws.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.t === "rtc_answer") onRtcAnswer(m);
+      else if (m.t === "hello") setLaptopOS(m.os);
     };
     ws.onclose = (e) => {
       stopScreen(false);
@@ -67,6 +68,7 @@
     $$("nav button").forEach((x) => x.classList.toggle("active", x === b));
     $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
     syncScreen();
+    if (b.dataset.tab === "kbd") kbdInput.focus(); // inside the tap, so Android opens the keyboard
   }));
 
   // ---------------- screen preview (WebRTC) ----------------
@@ -76,11 +78,15 @@
 
   function showScreenMsg(text) { screenMsg.textContent = text || ""; screenMsg.classList.toggle("hidden", !text); }
 
+  const activeTab = () => $(".tab.active");
   function wantScreen() {
     return settings.screenOn && document.visibilityState === "visible" &&
-      $("#tab-pad").classList.contains("active") && ws && ws.readyState === 1;
+      !!activeTab().querySelector(".screen-slot") && ws && ws.readyState === 1;
   }
   function syncScreen() {
+    // the preview is shared by the Touchpad and Keyboard tabs: move it into the visible one
+    const slot = activeTab().querySelector(".screen-slot");
+    if (slot && screenEl.parentElement !== slot) { slot.appendChild(screenEl); vid.play().catch(() => {}); }
     screenEl.classList.toggle("hidden", !settings.screenOn);
     screenEl.classList.toggle("large", settings.screenLarge);
     screenBtn.classList.toggle("on", settings.screenOn);
@@ -251,6 +257,116 @@
     btn.addEventListener("pointerleave", up);
     btn.addEventListener("contextmenu", (e) => e.preventDefault());
   });
+
+  // ---------------- keyboard (live typing) ----------------
+  // The phone keyboard types into a real input; every change is diffed against the previous value
+  // and replayed on the laptop as backspaces + new text. This works with Gboard autocorrect, swipe
+  // typing, Hindi keyboards and keyboard voice input, which don't send usable key events.
+  const kbdInput = $("#kbdInput"), kbdHint = $("#kbdHint");
+  const SENTINEL = "​";  // invisible char, so Backspace on an "empty" field still produces an edit
+  let prevVal = SENTINEL, composing = false, laptopOS = "win";
+  kbdInput.value = SENTINEL;
+  const cps = (s) => [...s].length; // code points = backspaces needed on the laptop
+
+  const mods = { ctrl: 0, alt: 0, shift: 0, win: 0 }; // 0 off, 1 next key only, 2 locked
+  const modBtns = {};
+  $$("[data-mod]").forEach((b) => {
+    modBtns[b.dataset.mod] = b;
+    b.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus (and the keyboard) in the input
+    b.addEventListener("click", () => { mods[b.dataset.mod] = (mods[b.dataset.mod] + 1) % 3; renderMods(); buzz(); });
+  });
+  function renderMods() {
+    for (const [k, b] of Object.entries(modBtns)) {
+      b.classList.toggle("mod-once", mods[k] === 1);
+      b.classList.toggle("mod-lock", mods[k] === 2);
+    }
+  }
+  const modPrefix = () => ["ctrl", "alt", "shift", "win"].filter((k) => mods[k]).map((k) => k + "+").join("");
+  function releaseOnceMods() {
+    for (const k in mods) if (mods[k] === 1) mods[k] = 0;
+    renderMods();
+  }
+  function sendKey(k) { // special keys + whatever modifiers are active
+    send({ t: "key", k: modPrefix() + k });
+    releaseOnceMods();
+  }
+
+  function resetInput(keep = "") {
+    kbdInput.value = prevVal = SENTINEL + keep;
+    kbdHint.classList.toggle("hidden", !!keep || document.activeElement === kbdInput);
+  }
+
+  kbdInput.addEventListener("compositionstart", () => { composing = true; });
+  kbdInput.addEventListener("compositionend", () => { composing = false; });
+  kbdInput.addEventListener("input", () => {
+    let v = kbdInput.value;
+    let i = 0;
+    while (i < prevVal.length && i < v.length && prevVal[i] === v[i]) i++;
+    if (i > 0 && /[\ud800-\udbff]/.test(prevVal[i - 1])) i--; // don't split an emoji's surrogate pair
+    const removed = prevVal.slice(i), added = v.slice(i);
+
+    const comboMods = mods.ctrl || mods.alt || mods.win;
+    if (comboMods && added && !removed) {
+      // Ctrl/Alt/Win active: letters become shortcuts (Ctrl+C...) instead of text
+      for (const ch of added) sendKey(ch === " " ? "space" : ch.toLowerCase());
+      kbdInput.value = prevVal;
+      return;
+    }
+    if (removed || added) {
+      send({ t: "edit", del: cps(removed), ins: added });
+      if (added && mods.shift === 1) releaseOnceMods();
+    }
+    if (!v.startsWith(SENTINEL)) v = SENTINEL + v;           // sentinel was deleted: put it back
+    if (v.length > 400 && !composing) v = SENTINEL + v.slice(-40); // keep the field short
+    if (v !== kbdInput.value) kbdInput.value = v;
+    prevVal = v;
+    kbdHint.classList.add("hidden");
+  });
+  kbdInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); sendKey("enter"); resetInput(); }
+    else if (e.key === "Tab") { e.preventDefault(); sendKey("tab"); }
+  });
+  // the laptop's caret is always at the end of what we've typed, so keep the phone's there too
+  const caretToEnd = () => { const n = kbdInput.value.length; if (kbdInput.selectionStart !== n) kbdInput.setSelectionRange(n, n); };
+  ["focus", "click", "select"].forEach((ev) => kbdInput.addEventListener(ev, () => setTimeout(caretToEnd, 0)));
+  kbdInput.addEventListener("focus", () => kbdHint.classList.add("hidden"));
+  kbdInput.addEventListener("blur", () => kbdHint.classList.toggle("hidden", kbdInput.value.length > 1));
+
+  // special keys: act on press, auto-repeat while held (arrows, backspace...)
+  $$("[data-k]").forEach((b) => {
+    let timer = null;
+    const stop = () => { clearTimeout(timer); clearInterval(timer); timer = null; };
+    const fire = () => {
+      let k = b.dataset.k;
+      if (b.dataset.k === "backspace" || b.dataset.k === "delete") resetInput(); // field no longer mirrors the laptop
+      sendKey(k);
+    };
+    b.addEventListener("mousedown", (e) => e.preventDefault()); // don't steal focus from the input
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); buzz(); fire();
+      if (b.hasAttribute("data-repeat")) timer = setTimeout(() => { timer = setInterval(fire, 70); }, 400);
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => b.addEventListener(ev, stop));
+    b.addEventListener("contextmenu", (e) => e.preventDefault());
+  });
+
+  function setLaptopOS(os) {
+    laptopOS = os;
+    $("#winKey").textContent = os === "mac" ? "⌘ Cmd" : "⊞ Win";
+    $("#altKey").textContent = os === "mac" ? "⌥ Opt" : "Alt";
+  }
+
+  // hide the bottom tabs while the phone keyboard is up, to leave room for the screen preview
+  let fullH = window.innerHeight;
+  const vv = window.visualViewport;
+  const onViewport = () => {
+    fullH = Math.max(fullH, window.innerHeight);
+    const h = vv ? vv.height : window.innerHeight;
+    document.body.classList.toggle("kbd-open", document.activeElement === kbdInput && h < fullH * 0.8);
+  };
+  (vv || window).addEventListener("resize", onViewport);
+  kbdInput.addEventListener("focus", () => setTimeout(onViewport, 300));
+  kbdInput.addEventListener("blur", () => setTimeout(onViewport, 100));
 
   // ---------------- voice ----------------
   const LANGS = { "mix-roman": "en-IN", "mix-deva": "hi-IN", en: "en-IN", hi: "hi-IN" };

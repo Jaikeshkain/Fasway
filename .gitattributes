@@ -1,0 +1,4 @@
+* text=auto
+# shell scripts must keep Unix line endings to run on macOS
+*.sh text eol=lf
+*.command text eol=lf
