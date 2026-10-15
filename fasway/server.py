@@ -7,13 +7,18 @@ import json
 import logging
 import ssl
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from aiohttp import web, WSMsgType
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
-from .platform_input import inp, screen_permission_problem
+from .platform_input import inp, screen_permission_problem, sysctl
 from .screen import ScreenGrabber, ScreenTrack
+
+SYSTEM_MSGS = {"media", "vol", "bright", "power", "clip_set", "clip_get", "sys_get"}
+POWER_ACTIONS = {"lock", "display_off", "sleep", "restart", "shutdown", "signout"}
+CLIP_MAX = 20000  # chars pushed to the phone
 
 log = logging.getLogger("fasway")
 # Packaged apps (PyInstaller) unpack bundled files under sys._MEIPASS
@@ -30,6 +35,10 @@ class FaswayServer:
         self.grabber = ScreenGrabber()
         self.loop: asyncio.AbstractEventLoop | None = None
         self._runner: web.AppRunner | None = None
+        # clipboard/volume/brightness/power calls can block (COM, WMI, AppleScript): own thread
+        self._sys_pool = ThreadPoolExecutor(1, thread_name_prefix="system", initializer=sysctl.thread_init)
+        self._clip_task: asyncio.Task | None = None
+        self._clip_from_phone: str | None = None  # don't echo the phone's own clipboard back to it
 
     # ---------- http ----------
     async def index(self, request):
@@ -62,14 +71,19 @@ class FaswayServer:
         log.info("phone connected from %s", request.remote)
         sess = {"pc": None, "track": None}
         await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win"}))
+        if self._clip_task is None:
+            self._clip_task = asyncio.create_task(self._watch_clipboard())
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     continue
                 try:
                     m = json.loads(msg.data)
-                    if str(m.get("t", "")).startswith("rtc_") or m.get("t") == "point":
+                    t = str(m.get("t", ""))
+                    if t.startswith("rtc_") or t == "point":
                         reply = await self.handle_screen(sess, m)
+                    elif t in SYSTEM_MSGS:
+                        reply = await self.handle_system(m)
                     else:
                         reply = self.handle(m)
                 except Exception as e:  # never let one bad message kill the session
@@ -113,10 +127,89 @@ class FaswayServer:
         elif t == "rtc_stop":
             await self._close_rtc(sess)
         elif t == "point" and sess["track"] and sess["track"].mon:
+            # touch on the screen preview: move there, then optionally click / press / release
             mon = sess["track"].mon
             fx, fy = min(max(float(m["x"]), 0.0), 1.0), min(max(float(m["y"]), 0.0), 1.0)
             inp.move_to(mon["left"] + fx * (mon["width"] - 1), mon["top"] + fy * (mon["height"] - 1))
+            a = m.get("a")
+            if a == "click":
+                inp.button("left", "click")
+            elif a == "rclick":
+                inp.button("right", "click")
+            elif a in ("down", "up"):
+                inp.button("left", a)
         return None
+
+    # ---------- system: clipboard, media, volume, brightness, power ----------
+    async def _sys(self, fn, *args):
+        return await asyncio.get_running_loop().run_in_executor(self._sys_pool, fn, *args)
+
+    async def _sys_state(self):
+        vol, muted = await self._sys(sysctl.get_volume)
+        bright = await self._sys(sysctl.get_brightness)
+        return {"t": "sys", "vol": vol, "muted": muted, "bright": bright}
+
+    async def handle_system(self, m: dict):
+        t = m["t"]
+        if t == "media":
+            await self._sys(sysctl.media, str(m.get("k", "")))
+            return None
+        if t == "vol":
+            mute = m.get("mute")
+            if mute == "toggle":
+                mute = not (await self._sys(sysctl.get_volume))[1]
+            await self._sys(sysctl.set_volume, m.get("v"), mute)
+            return await self._sys_state()
+        if t == "bright":
+            if "v" in m:
+                await self._sys(sysctl.set_brightness, int(m["v"]))
+            else:
+                await self._sys(sysctl.step_brightness, bool(m.get("up")))
+            return await self._sys_state()
+        if t == "sys_get":
+            return await self._sys_state()
+        if t == "power" and m.get("a") in POWER_ACTIONS:
+            log.info("power action from phone: %s", m["a"])
+            await self._sys(sysctl.power, m["a"])
+            return None
+        if t == "clip_get":
+            text = await self._sys(sysctl.get_clipboard)
+            return {"t": "clip", "v": (text or "")[:CLIP_MAX], "manual": True}
+        if t == "clip_set":
+            text = str(m.get("v", ""))[:1_000_000]
+            self._clip_from_phone = text
+            ok = await self._sys(sysctl.set_clipboard, text)
+            if ok and m.get("paste"):
+                await asyncio.sleep(0.05)
+                inp.hotkey("mod+v")   # Ctrl+V / Cmd+V into the focused app
+            return {"t": "clip_ok", "ok": bool(ok), "paste": bool(m.get("paste"))}
+        return None
+
+    async def _watch_clipboard(self):
+        """Push laptop clipboard text to connected phones whenever it changes."""
+        seq = await self._sys(sysctl.clipboard_seq)
+        while True:
+            await asyncio.sleep(0.4)
+            if not self.clients:
+                continue
+            try:
+                new = await self._sys(sysctl.clipboard_seq)
+                if new == seq:
+                    continue
+                seq = new
+                text = await self._sys(sysctl.get_clipboard)
+            except Exception as e:
+                log.debug("clipboard read failed: %s", e)
+                continue
+            if not text or text == self._clip_from_phone:
+                continue
+            self._clip_from_phone = None
+            msg = json.dumps({"t": "clip", "v": text[:CLIP_MAX], "truncated": len(text) > CLIP_MAX})
+            for ws in list(self.clients):
+                try:
+                    await ws.send_str(msg)
+                except Exception:
+                    pass
 
     @staticmethod
     async def _close_rtc(sess: dict):

@@ -10,7 +10,7 @@
   };
   const settings = Object.assign(
     { speed: 1.6, accel: 1.2, scrollSpeed: 2.0, natural: true, haptics: true, lang: "mix-roman", review: false,
-      screenOn: false, screenLarge: false, screenQuality: "medium" },
+      screenOn: false, screenLarge: false, screenQuality: "medium", screenControl: true, clipAuto: true },
     store.get("settings", {})
   );
   const saveSettings = () => store.set("settings", settings);
@@ -41,6 +41,9 @@
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.t === "rtc_answer") onRtcAnswer(m);
       else if (m.t === "hello") setLaptopOS(m.os);
+      else if (m.t === "sys") onSys(m);
+      else if (m.t === "clip") onClip(m);
+      else if (m.t === "clip_ok") notify(!m.ok ? "Couldn't set the laptop clipboard" : m.paste ? "Pasted on laptop" : "Sent to laptop clipboard");
     };
     ws.onclose = (e) => {
       stopScreen(false);
@@ -69,6 +72,7 @@
     $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
     syncScreen();
     if (b.dataset.tab === "kbd") kbdInput.focus(); // inside the tap, so Android opens the keyboard
+    if (b.dataset.tab === "ctl") refreshSys();
   }));
 
   // ---------------- screen preview (WebRTC) ----------------
@@ -144,19 +148,166 @@
   screenBtn.addEventListener("click", () => { settings.screenOn = !settings.screenOn; saveSettings(); syncScreen(); buzz(); });
   $("#screenSize").addEventListener("click", (e) => {
     e.stopPropagation();
-    settings.screenLarge = !settings.screenLarge; saveSettings(); syncScreen();
+    settings.screenLarge = !settings.screenLarge; saveSettings(); syncScreen(); resetView();
   });
   document.addEventListener("visibilitychange", syncScreen);
 
-  // tap on the preview -> move the laptop cursor to that spot
-  vid.addEventListener("click", (e) => {
-    if (!vid.videoWidth) return;
-    const r = vid.getBoundingClientRect();
-    const scale = Math.min(r.width / vid.videoWidth, r.height / vid.videoHeight); // object-fit: contain
-    const cw = vid.videoWidth * scale, ch = vid.videoHeight * scale;
-    const fx = (e.clientX - r.left - (r.width - cw) / 2) / cw, fy = (e.clientY - r.top - (r.height - ch) / 2) / ch;
-    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
-    send({ t: "point", x: fx, y: fy }); buzz();
+  // ---- direct touch on the preview ----
+  // tap = click · long-press = right click · drag = drag · double-tap = double click
+  // 2 fingers: pinch = zoom the preview, move = pan (when zoomed) or scroll the laptop (when not)
+  // 2-finger tap = reset zoom.  In 👁 view-only mode touches only zoom/pan the preview.
+  const screenToast = $("#screenToast"), modeBtn = $("#screenMode"), fsInput = $("#fsInput");
+  const view = { s: 1, tx: 0, ty: 0 };
+  const LONG_MS = 500;
+  let sg = null, pendingPt = null, ptRaf = false, toastTimer = null;
+
+  function toast(msg) {
+    screenToast.textContent = msg; screenToast.classList.remove("hidden");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => screenToast.classList.add("hidden"), 1200);
+  }
+  function applyView() {
+    const W = screenEl.clientWidth, H = screenEl.clientHeight;
+    view.s = Math.min(Math.max(view.s, 1), 6);
+    view.tx = Math.min(0, Math.max(W - W * view.s, view.tx));
+    view.ty = Math.min(0, Math.max(H - H * view.s, view.ty));
+    vid.style.transform = view.s === 1 ? "" : `translate(${view.tx}px, ${view.ty}px) scale(${view.s})`;
+  }
+  function resetView() { view.s = 1; view.tx = view.ty = 0; applyView(); }
+  window.addEventListener("resize", applyView);
+
+  // screen coordinates -> fraction of the laptop screen (accounts for zoom and letterboxing)
+  function toFrac(cx, cy, clamp) {
+    if (!vid.videoWidth) return null;
+    const r = screenEl.getBoundingClientRect();
+    const W = screenEl.clientWidth, H = screenEl.clientHeight;
+    const lx = (cx - r.left - screenEl.clientLeft - view.tx) / view.s;
+    const ly = (cy - r.top - screenEl.clientTop - view.ty) / view.s;
+    const k = Math.min(W / vid.videoWidth, H / vid.videoHeight); // object-fit: contain
+    const cw = vid.videoWidth * k, ch = vid.videoHeight * k;
+    let fx = (lx - (W - cw) / 2) / cw, fy = (ly - (H - ch) / 2) / ch;
+    if (clamp) { fx = Math.min(1, Math.max(0, fx)); fy = Math.min(1, Math.max(0, fy)); }
+    else if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+    return [fx, fy];
+  }
+  const point = (f, a) => send(a ? { t: "point", x: f[0], y: f[1], a } : { t: "point", x: f[0], y: f[1] }, !a);
+  function queueMove(f) { // drag moves: at most one per frame
+    pendingPt = f;
+    if (!ptRaf) { ptRaf = true; requestAnimationFrame(() => { ptRaf = false; if (pendingPt) { point(pendingPt); pendingPt = null; } }); }
+  }
+  function two(e) {
+    const [a, b] = e.touches;
+    return { cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2, d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) };
+  }
+  function endDrag() {
+    pendingPt = null; // the release below goes to the final position anyway; never move after it
+    const f = sg.lastF || toFrac(sg.x0, sg.y0, true);
+    if (f) point(f, "up");
+    sg.mode = "done";
+  }
+
+  screenEl.addEventListener("touchstart", (e) => {
+    if (e.target.closest("button")) return; // let the toolbar buttons work
+    e.preventDefault();
+    const control = settings.screenControl;
+    if (e.touches.length === 1 && !sg) {
+      const x = e.touches[0].clientX, y = e.touches[0].clientY;
+      sg = { mode: "pending1", x0: x, y0: y, t0: performance.now(), control };
+      if (control) sg.timer = setTimeout(() => {
+        if (!sg || sg.mode !== "pending1") return;
+        const f = toFrac(x, y);
+        if (f) { point(f, "rclick"); buzz(); toast("Right click"); }
+        sg.mode = "done";
+      }, LONG_MS);
+    } else if (e.touches.length === 2) {
+      if (sg) { clearTimeout(sg.timer); if (sg.mode === "drag") endDrag(); }
+      const t = two(e);
+      sg = { mode: "pending2", c0: t, last: t, s0: view.s, tx0: view.tx, ty0: view.ty, t0: performance.now(), control };
+    }
+  }, { passive: false });
+
+  screenEl.addEventListener("touchmove", (e) => {
+    if (!sg) return;
+    e.preventDefault();
+    if (e.touches.length === 1 && ["pending1", "drag", "pan1"].includes(sg.mode)) {
+      const x = e.touches[0].clientX, y = e.touches[0].clientY;
+      if (sg.mode === "pending1") {
+        if (Math.hypot(x - sg.x0, y - sg.y0) < 10) return;
+        clearTimeout(sg.timer);
+        if (!sg.control) { sg.mode = "pan1"; sg.tx0 = view.tx; sg.ty0 = view.ty; }
+        else {
+          const f0 = toFrac(sg.x0, sg.y0);
+          if (!f0) { sg.mode = "done"; return; }
+          point(f0, "down"); sg.mode = "drag"; buzz();
+        }
+      }
+      if (sg.mode === "drag") { const f = toFrac(x, y, true); if (f) { sg.lastF = f; queueMove(f); } }
+      else if (sg.mode === "pan1") { view.tx = sg.tx0 + x - sg.x0; view.ty = sg.ty0 + y - sg.y0; applyView(); }
+      return;
+    }
+    if (e.touches.length === 2 && sg.c0) {
+      const t = two(e);
+      if (sg.mode === "pending2") {
+        const dd = Math.abs(t.d - sg.c0.d), dc = Math.hypot(t.cx - sg.c0.cx, t.cy - sg.c0.cy);
+        if (dd > 14) sg.mode = "zoom";
+        else if (dc > 10) {
+          sg.mode = view.s > 1.02 || !sg.control ? "zoom" : "scroll";
+          if (sg.mode === "scroll") { const f = toFrac(sg.c0.cx, sg.c0.cy, true); if (f) point(f); } // scroll the window under the fingers
+        } else return;
+      }
+      if (sg.mode === "zoom") {
+        // keep the spot that was under the fingers under the fingers while zooming/panning
+        const r = screenEl.getBoundingClientRect();
+        const s = Math.min(6, Math.max(1, sg.s0 * t.d / sg.c0.d));
+        const px = (sg.c0.cx - r.left - sg.tx0) / sg.s0, py = (sg.c0.cy - r.top - sg.ty0) / sg.s0;
+        view.s = s; view.tx = t.cx - r.left - px * s; view.ty = t.cy - r.top - py * s;
+        applyView();
+      } else if (sg.mode === "scroll") {
+        const k = settings.scrollSpeed * 2.5, dir = settings.natural ? 1 : -1;
+        scrY += (t.cy - sg.last.cy) * k * dir;
+        scrX += -(t.cx - sg.last.cx) * k * dir;
+        scheduleFlush();
+      }
+      sg.last = t;
+    }
+  }, { passive: false });
+
+  function screenTouchEnd(e) {
+    if (!sg) return;
+    e.preventDefault();
+    if (e.touches.length) return; // wait until every finger is up
+    clearTimeout(sg.timer);
+    const dt = performance.now() - sg.t0;
+    if (sg.mode === "pending1" && sg.control && dt < LONG_MS && e.type === "touchend") {
+      const f = toFrac(sg.x0, sg.y0);
+      if (f) { point(f, "click"); buzz(); }
+    } else if (sg.mode === "drag") endDrag();
+    else if (sg.mode === "pending2" && dt < 300) { resetView(); toast("Zoom reset"); }
+    sg = null;
+  }
+  screenEl.addEventListener("touchend", screenTouchEnd, { passive: false });
+  screenEl.addEventListener("touchcancel", screenTouchEnd, { passive: false });
+
+  // toolbar: touch mode, keyboard (full screen), full screen
+  function renderMode() { modeBtn.textContent = settings.screenControl ? "👆" : "👁"; }
+  renderMode();
+  modeBtn.addEventListener("click", () => {
+    settings.screenControl = !settings.screenControl; saveSettings(); renderMode(); buzz();
+    toast(settings.screenControl ? "Touch controls the laptop" : "View only – pinch to zoom");
+  });
+  $$(".screen-tools button").forEach((b) => b.addEventListener("mousedown", (e) => e.preventDefault()));
+  $("#screenFull").addEventListener("click", async () => {
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+    try {
+      await screenEl.requestFullscreen({ navigationUI: "hide" });
+      await screen.orientation.lock("landscape").catch(() => {});
+    } catch { toast("Full screen not available"); }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    resetView();
+    if (!document.fullscreenElement) { try { screen.orientation.unlock(); } catch {} fsInput.blur(); }
+  });
+  $("#screenKbd").addEventListener("click", () => {
+    if (document.activeElement === fsInput) fsInput.blur(); else fsInput.focus();
   });
 
   // ---------------- touchpad ----------------
@@ -264,8 +415,7 @@
   // typing, Hindi keyboards and keyboard voice input, which don't send usable key events.
   const kbdInput = $("#kbdInput"), kbdHint = $("#kbdHint");
   const SENTINEL = "​";  // invisible char, so Backspace on an "empty" field still produces an edit
-  let prevVal = SENTINEL, composing = false, laptopOS = "win";
-  kbdInput.value = SENTINEL;
+  let laptopOS = "win";
   const cps = (s) => [...s].length; // code points = backspaces needed on the laptop
 
   const mods = { ctrl: 0, alt: 0, shift: 0, win: 0 }; // 0 off, 1 next key only, 2 locked
@@ -291,46 +441,55 @@
     releaseOnceMods();
   }
 
-  function resetInput(keep = "") {
-    kbdInput.value = prevVal = SENTINEL + keep;
-    kbdHint.classList.toggle("hidden", !!keep || document.activeElement === kbdInput);
+  // Mirrors an <input> to the laptop. Used by the Keyboard tab and the full-screen preview.
+  function bindLiveTyping(el, hint) {
+    let prev = SENTINEL, composing = false;
+    el.value = SENTINEL;
+    const reset = () => {
+      el.value = prev = SENTINEL;
+      if (hint) hint.classList.toggle("hidden", document.activeElement === el);
+    };
+    el.addEventListener("compositionstart", () => { composing = true; });
+    el.addEventListener("compositionend", () => { composing = false; });
+    el.addEventListener("input", () => {
+      let v = el.value;
+      let i = 0;
+      while (i < prev.length && i < v.length && prev[i] === v[i]) i++;
+      if (i > 0 && /[\ud800-\udbff]/.test(prev[i - 1])) i--; // don't split an emoji's surrogate pair
+      const removed = prev.slice(i), added = v.slice(i);
+
+      const comboMods = mods.ctrl || mods.alt || mods.win;
+      if (comboMods && added && !removed) {
+        // Ctrl/Alt/Win active: letters become shortcuts (Ctrl+C...) instead of text
+        for (const ch of added) sendKey(ch === " " ? "space" : ch.toLowerCase());
+        el.value = prev;
+        return;
+      }
+      if (removed || added) {
+        send({ t: "edit", del: cps(removed), ins: added });
+        if (added && mods.shift === 1) releaseOnceMods();
+      }
+      if (!v.startsWith(SENTINEL)) v = SENTINEL + v;           // sentinel was deleted: put it back
+      if (v.length > 400 && !composing) v = SENTINEL + v.slice(-40); // keep the field short
+      if (v !== el.value) el.value = v;
+      prev = v;
+      if (hint) hint.classList.add("hidden");
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); sendKey("enter"); reset(); }
+      else if (e.key === "Tab") { e.preventDefault(); sendKey("tab"); }
+    });
+    // the laptop's caret is always at the end of what we've typed, so keep the phone's there too
+    const caretToEnd = () => { const n = el.value.length; if (el.selectionStart !== n) el.setSelectionRange(n, n); };
+    ["focus", "click", "select"].forEach((ev) => el.addEventListener(ev, () => setTimeout(caretToEnd, 0)));
+    if (hint) {
+      el.addEventListener("focus", () => hint.classList.add("hidden"));
+      el.addEventListener("blur", () => hint.classList.toggle("hidden", el.value.length > 1));
+    }
+    return { reset };
   }
-
-  kbdInput.addEventListener("compositionstart", () => { composing = true; });
-  kbdInput.addEventListener("compositionend", () => { composing = false; });
-  kbdInput.addEventListener("input", () => {
-    let v = kbdInput.value;
-    let i = 0;
-    while (i < prevVal.length && i < v.length && prevVal[i] === v[i]) i++;
-    if (i > 0 && /[\ud800-\udbff]/.test(prevVal[i - 1])) i--; // don't split an emoji's surrogate pair
-    const removed = prevVal.slice(i), added = v.slice(i);
-
-    const comboMods = mods.ctrl || mods.alt || mods.win;
-    if (comboMods && added && !removed) {
-      // Ctrl/Alt/Win active: letters become shortcuts (Ctrl+C...) instead of text
-      for (const ch of added) sendKey(ch === " " ? "space" : ch.toLowerCase());
-      kbdInput.value = prevVal;
-      return;
-    }
-    if (removed || added) {
-      send({ t: "edit", del: cps(removed), ins: added });
-      if (added && mods.shift === 1) releaseOnceMods();
-    }
-    if (!v.startsWith(SENTINEL)) v = SENTINEL + v;           // sentinel was deleted: put it back
-    if (v.length > 400 && !composing) v = SENTINEL + v.slice(-40); // keep the field short
-    if (v !== kbdInput.value) kbdInput.value = v;
-    prevVal = v;
-    kbdHint.classList.add("hidden");
-  });
-  kbdInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); sendKey("enter"); resetInput(); }
-    else if (e.key === "Tab") { e.preventDefault(); sendKey("tab"); }
-  });
-  // the laptop's caret is always at the end of what we've typed, so keep the phone's there too
-  const caretToEnd = () => { const n = kbdInput.value.length; if (kbdInput.selectionStart !== n) kbdInput.setSelectionRange(n, n); };
-  ["focus", "click", "select"].forEach((ev) => kbdInput.addEventListener(ev, () => setTimeout(caretToEnd, 0)));
-  kbdInput.addEventListener("focus", () => kbdHint.classList.add("hidden"));
-  kbdInput.addEventListener("blur", () => kbdHint.classList.toggle("hidden", kbdInput.value.length > 1));
+  const resetInput = bindLiveTyping(kbdInput, kbdHint).reset;
+  bindLiveTyping(fsInput, null); // typing while the preview is full screen
 
   // special keys: act on press, auto-repeat while held (arrows, backspace...)
   $$("[data-k]").forEach((b) => {
@@ -367,6 +526,115 @@
   (vv || window).addEventListener("resize", onViewport);
   kbdInput.addEventListener("focus", () => setTimeout(onViewport, 300));
   kbdInput.addEventListener("blur", () => setTimeout(onViewport, 100));
+
+  // ---------------- controls: media, volume, brightness, power ----------------
+  const notifyEl = $("#toast");
+  let notifyTimer = null;
+  function notify(msg) {
+    notifyEl.textContent = msg; notifyEl.classList.remove("hidden");
+    clearTimeout(notifyTimer); notifyTimer = setTimeout(() => notifyEl.classList.add("hidden"), 1800);
+  }
+  const throttle = (fn, ms) => { // run at most every `ms`, always delivering the latest value
+    let last = 0, timer = null;
+    return (...a) => {
+      const now = Date.now(); clearTimeout(timer);
+      if (now - last >= ms) { last = now; fn(...a); }
+      else timer = setTimeout(() => { last = Date.now(); fn(...a); }, ms - (now - last));
+    };
+  };
+
+  $$("[data-media]").forEach((b) => b.addEventListener("click", () => { send({ t: "media", k: b.dataset.media }); buzz(); }));
+
+  const volSlider = $("#volSlider"), volOut = $("#volOut"), muteBtn = $("#muteBtn");
+  const brightSlider = $("#brightSlider"), brightOut = $("#brightOut");
+  let volDragging = false, brightDragging = false;
+  function onSys(m) {
+    volSlider.disabled = m.vol == null;
+    if (m.vol != null && !volDragging) { volSlider.value = m.vol; volOut.textContent = m.vol; }
+    muteBtn.textContent = m.muted ? "🔇" : "🔊";
+    const hasB = m.bright != null; // macOS and some external monitors: only -/+ buttons
+    brightSlider.classList.toggle("hidden", !hasB);
+    brightOut.classList.toggle("hidden", !hasB);
+    if (hasB && !brightDragging) { brightSlider.value = m.bright; brightOut.textContent = m.bright; }
+  }
+  function refreshSys() { send({ t: "sys_get" }); }
+  // keep sliders in sync with changes made on the laptop while the tab is open
+  setInterval(() => {
+    if ($("#tab-ctl").classList.contains("active") && document.visibilityState === "visible") refreshSys();
+  }, 3000);
+
+  const sendVol = throttle((v) => send({ t: "vol", v }), 120);
+  volSlider.addEventListener("input", () => { volDragging = true; volOut.textContent = volSlider.value; sendVol(+volSlider.value); });
+  volSlider.addEventListener("change", () => { volDragging = false; });
+  muteBtn.addEventListener("click", () => { send({ t: "vol", mute: "toggle" }); buzz(); });
+
+  const sendBright = throttle((v) => send({ t: "bright", v }), 300);
+  brightSlider.addEventListener("input", () => { brightDragging = true; brightOut.textContent = brightSlider.value; sendBright(+brightSlider.value); });
+  brightSlider.addEventListener("change", () => { brightDragging = false; });
+  $("#brightUp").addEventListener("click", () => { send({ t: "bright", up: true }); buzz(); });
+  $("#brightDown").addEventListener("click", () => { send({ t: "bright", up: false }); buzz(); });
+
+  $$("[data-power]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+    if (send({ t: "power", a: b.dataset.power })) { buzz(); notify(b.textContent.trim() + " sent"); }
+  }));
+
+  // ---------------- clipboard ----------------
+  const clipList = $("#clipList"), clipAuto = $("#clipAuto");
+  const clips = []; // newest first: {v, src: "laptop" | "phone"}
+  clipAuto.checked = settings.clipAuto;
+  clipAuto.addEventListener("change", () => { settings.clipAuto = clipAuto.checked; saveSettings(); });
+
+  function addClip(v, src) {
+    if (!v) return;
+    const i = clips.findIndex((c) => c.v === v);
+    if (i >= 0) clips.splice(i, 1);
+    clips.unshift({ v, src });
+    clips.length = Math.min(clips.length, 10);
+    renderClips();
+  }
+  function renderClips() {
+    clipList.innerHTML = "";
+    for (const c of clips) {
+      const row = document.createElement("div"); row.className = "clip-item";
+      const body = document.createElement("div"); body.style.flex = "1"; body.style.minWidth = "0";
+      const txt = document.createElement("div"); txt.className = "txt"; txt.textContent = c.v;
+      const src = document.createElement("div"); src.className = "src"; src.textContent = c.src === "laptop" ? "from laptop" : "sent from phone";
+      body.append(txt, src);
+      const btn = document.createElement("button"); btn.textContent = "Copy";
+      btn.addEventListener("click", () => copyToPhone(c.v));
+      const paste = document.createElement("button"); paste.textContent = "Paste"; paste.title = "Paste on laptop";
+      paste.addEventListener("click", () => send({ t: "clip_set", v: c.v, paste: true }));
+      row.append(body, btn, paste);
+      clipList.appendChild(row);
+    }
+  }
+  async function copyToPhone(v, silent) {
+    try { await navigator.clipboard.writeText(v); if (!silent) notify("Copied to phone"); return true; }
+    catch { if (!silent) notify("Couldn't copy – long-press the text to copy it"); return false; }
+  }
+  function onClip(m) {
+    addClip(m.v, "laptop");
+    if (m.manual) return;
+    if (settings.clipAuto) copyToPhone(m.v, true).then((ok) => ok && notify("📋 Laptop clipboard copied to phone"));
+    else notify("📋 New laptop clipboard");
+  }
+  async function readPhoneClipboard() {
+    try {
+      const v = await navigator.clipboard.readText();
+      if (!v) { notify("Phone clipboard is empty"); return null; }
+      return v;
+    } catch { notify("Allow clipboard access for this site to send it"); return null; }
+  }
+  $("#clipSend").addEventListener("click", async () => {
+    const v = await readPhoneClipboard();
+    if (v && send({ t: "clip_set", v })) addClip(v, "phone");
+  });
+  $("#clipPaste").addEventListener("click", async () => {
+    const v = await readPhoneClipboard();
+    if (v && send({ t: "clip_set", v, paste: true })) addClip(v, "phone");
+  });
+  $("#clipGet").addEventListener("click", () => send({ t: "clip_get" }));
 
   // ---------------- voice ----------------
   const LANGS = { "mix-roman": "en-IN", "mix-deva": "hi-IN", en: "en-IN", hi: "hi-IN" };

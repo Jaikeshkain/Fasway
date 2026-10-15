@@ -3,8 +3,10 @@ import sys
 
 if sys.platform == "darwin":
     from . import input_mac as inp
+    from . import system_mac as sysctl
 elif sys.platform == "win32":
     from . import input_win as inp
+    from . import system_win as sysctl
     inp.enable_dpi_awareness()  # before any window or capture, so coordinates are real pixels
     inp.enable_precise_timers()
 else:

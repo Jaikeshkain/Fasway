@@ -40,15 +40,52 @@ main { flex: 1; min-height: 0; position: relative; }
 .screen video { width: 100%; height: 100%; object-fit: contain; display: block; }
 .screen-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   text-align: center; padding: 16px; color: var(--muted); font-size: 13px; pointer-events: none; }
-.screen-size { position: absolute; right: 6px; bottom: 6px; padding: 4px 10px; font-size: 16px;
-  background: rgba(0,0,0,.55); border-radius: 8px; }
+.screen { touch-action: none; }
+.screen video { transform-origin: 0 0; will-change: transform; }
+.screen-tools { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; z-index: 2; }
+.screen-tools button { padding: 4px 9px; font-size: 15px; background: rgba(0,0,0,.6); border-radius: 8px; min-width: 34px; }
+.screen-tools button.off { opacity: .55; }
+.fs-only { display: none; }
+.screen:fullscreen .fs-only { display: inline-block; }
+.screen:fullscreen { aspect-ratio: auto; max-height: none; height: 100%; width: 100%; border: 0; border-radius: 0; }
+.screen:fullscreen #screenSize { display: none; }
+.fs-input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
+.screen-toast { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: rgba(0,0,0,.7);
+  padding: 4px 12px; border-radius: 999px; font-size: 12px; pointer-events: none; z-index: 2; }
+
+/* Controls tab */
+#tab-ctl { overflow-y: auto; gap: 10px; }
+.card { background: var(--panel); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
+.card h4 { margin: 0; font-size: 14px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+.toggle.small { font-size: 12px; font-weight: 400; }
+.toggle.small input { width: 15px; height: 15px; }
+.media-row { display: flex; gap: 10px; }
+.media-row button { flex: 1; font-size: 22px; padding: 10px; }
+.media-row button.big { flex: 1.4; background: var(--accent); }
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-row button { background: transparent; font-size: 20px; padding: 4px; }
+.slider-row input[type=range] { flex: 1; accent-color: var(--accent); height: 28px; }
+.slider-row output { width: 34px; text-align: right; color: var(--muted); font-size: 13px; }
+.clip-actions { display: flex; gap: 8px; }
+.clip-actions button { flex: 1; font-size: 13px; padding: 10px 6px; }
+.clip-list { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; }
+.clip-item { display: flex; gap: 8px; align-items: center; background: var(--panel2); border-radius: 10px; padding: 8px 10px; }
+.clip-item .txt { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; word-break: break-word; user-select: text; -webkit-user-select: text; }
+.clip-item .src { font-size: 11px; color: var(--muted); }
+.clip-item button { padding: 6px 10px; font-size: 12px; background: var(--accent); }
+.clip-empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
+.link-btn { background: transparent; color: var(--accent); font-size: 13px; padding: 2px; align-self: flex-start; }
+.power-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.power-grid button { font-size: 14px; padding: 12px 6px; }
+.power-grid button.danger { background: #3a1f24; }
 .icon-btn.on { color: var(--accent); }
 #pad { min-height: 140px; }
 
 .screen-slot { display: contents; }
 /* Keyboard tab: always the compact 16:9 preview, shrinking when the phone keyboard needs room */
 #tab-kbd .screen, #tab-kbd .screen.large { aspect-ratio: 16 / 9; height: auto; max-height: 34vh; flex: 0 1 auto; min-height: 0; }
-#tab-kbd .screen-size { display: none; }
+#tab-kbd #screenSize { display: none; }
 
 /* Keyboard */
 #tab-kbd { gap: 8px; }
@@ -108,4 +145,7 @@ nav button.active { color: var(--text); background: var(--panel); }
 #closeSheet { background: var(--accent); }
 .overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center;
   text-align: center; padding: 30px; z-index: 20; }
+.toast { position: fixed; left: 50%; top: max(56px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 30;
+  background: #2b3140; color: var(--text); padding: 8px 16px; border-radius: 999px; font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4); max-width: 90vw; text-align: center; pointer-events: none; }
 .hidden { display: none !important; }

@@ -25,7 +25,14 @@
         <div id="screen" class="screen hidden">
           <video id="screenVid" autoplay playsinline muted></video>
           <div id="screenMsg" class="screen-msg">Connecting to screen…</div>
-          <button id="screenSize" class="screen-size" aria-label="Resize preview">⤢</button>
+          <input id="fsInput" class="fs-input" type="text" autocomplete="off" autocapitalize="sentences" aria-label="Type on laptop">
+          <div class="screen-tools">
+            <button id="screenMode" aria-label="Touch mode">👆</button>
+            <button id="screenKbd" class="fs-only" aria-label="Keyboard">⌨</button>
+            <button id="screenFull" aria-label="Full screen">⛶</button>
+            <button id="screenSize" aria-label="Resize preview">⤢</button>
+          </div>
+          <div id="screenToast" class="screen-toast hidden"></div>
         </div>
       </div>
       <div id="pad">
@@ -87,6 +94,51 @@
       </div>
     </section>
 
+    <!-- Controls -->
+    <section id="tab-ctl" class="tab">
+      <div class="card">
+        <h4>Media</h4>
+        <div class="media-row">
+          <button data-media="prevtrack" aria-label="Previous">⏮</button>
+          <button data-media="playpause" class="big" aria-label="Play / pause">⏯</button>
+          <button data-media="nexttrack" aria-label="Next">⏭</button>
+        </div>
+        <div class="slider-row">
+          <button id="muteBtn" aria-label="Mute">🔊</button>
+          <input type="range" id="volSlider" min="0" max="100" step="1" aria-label="Volume">
+          <output id="volOut">–</output>
+        </div>
+        <div class="slider-row">
+          <button id="brightDown" aria-label="Brightness down">🔅</button>
+          <input type="range" id="brightSlider" min="0" max="100" step="1" aria-label="Brightness">
+          <output id="brightOut">–</output>
+          <button id="brightUp" aria-label="Brightness up">🔆</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4>Clipboard <label class="toggle small"><input type="checkbox" id="clipAuto"> Auto-copy to phone</label></h4>
+        <div class="clip-actions">
+          <button id="clipSend">📤 Send phone clipboard</button>
+          <button id="clipPaste">📋 Paste on laptop</button>
+        </div>
+        <div id="clipList" class="clip-list"><div class="clip-empty">Copy something on the laptop – it shows up here.</div></div>
+        <button id="clipGet" class="link-btn">Get current laptop clipboard</button>
+      </div>
+
+      <div class="card">
+        <h4>Power</h4>
+        <div class="power-grid">
+          <button data-power="lock">🔒 Lock</button>
+          <button data-power="display_off">🌑 Display off</button>
+          <button data-power="sleep" data-confirm="Put the laptop to sleep?">😴 Sleep</button>
+          <button data-power="signout" data-confirm="Sign out? Unsaved work will be lost.">🚪 Sign out</button>
+          <button data-power="restart" data-confirm="Restart the laptop now? Unsaved work will be lost." class="danger">🔄 Restart</button>
+          <button data-power="shutdown" data-confirm="Shut down the laptop now? Unsaved work will be lost." class="danger">⏻ Shut down</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Voice -->
     <section id="tab-voice" class="tab">
       <div class="lang-row">
@@ -127,6 +179,7 @@
     <button data-tab="pad" class="active">🖱️<span>Touchpad</span></button>
     <button data-tab="kbd">⌨️<span>Keyboard</span></button>
     <button data-tab="voice">🎙️<span>Voice</span></button>
+    <button data-tab="ctl">🎛️<span>Controls</span></button>
   </nav>
 
   <!-- Settings sheet -->
@@ -146,10 +199,11 @@
           <option value="medium">Medium (720p, 30 fps)</option>
           <option value="high">High (1080p, 30 fps)</option>
         </select></label>
-      <label class="toggle"><input type="checkbox" id="haptics"> Vibrate on click</label>
-      <button id="closeSheet">Done</button>
+      <label class="toggle"><input type="checkbox" id="haptics"> Vibrate on click</label>      <button id="closeSheet">Done</button>
     </div>
   </div>
+
+  <div id="toast" class="toast hidden"></div>
 
   <div id="noToken" class="overlay hidden">
     <div>

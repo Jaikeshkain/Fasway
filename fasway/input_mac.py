@@ -179,6 +179,8 @@ KEYCODE = {  # US layout virtual key codes
     "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
     ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50,
 }
+# media keys can't be sent as key codes on macOS; hotkey() forwards them to system_mac
+_MEDIA_KEYS = {"playpause", "nexttrack", "prevtrack", "mediastop", "volumeup", "volumedown", "volumemute"}
 MODS = {  # name -> (keycode, flag)
     "cmd": (55, Q.kCGEventFlagMaskCommand),
     "shift": (56, Q.kCGEventFlagMaskShift),
@@ -205,6 +207,10 @@ def _post_key(code, down, flags=0):
 def hotkey(combo: str):
     """e.g. 'enter', 'mod+z' (Cmd+Z), 'ctrl+backspace' (Option+Delete), 'shift+left', 'f5'."""
     combo = combo.lower()
+    if combo in _MEDIA_KEYS:
+        from . import system_mac
+        system_mac.media(combo)
+        return
     combo = MAC_SHORTCUTS.get(combo, combo)
     parts = ["+"] if combo == "+" else [ALIASES.get(p, p) for p in combo.split("+")]
     mods, key = parts[:-1], parts[-1]

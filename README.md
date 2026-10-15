@@ -32,8 +32,22 @@ When Windows Firewall asks, allow Python on **Private networks**.
 You can adjust speed, acceleration, scroll speed and natural scrolling with ⚙ on the phone.
 
 ## Live screen preview (WebRTC)
-Tap **🖥** in the top bar to show the laptop screen, with its cursor, above the touchpad.
-- **Tap the preview** to move the cursor to that spot, then tap the pad to click.
+Tap **🖥** in the top bar to show the laptop screen, with its cursor, above the touchpad (also shown on the Keyboard tab).
+
+**Touch the preview to control the laptop directly:**
+
+| On the preview | Does |
+|---|---|
+| Tap | Left click there (tap twice to double-click) |
+| Long-press | Right click |
+| Drag | Drag or select |
+| Pinch | Zoom the preview (up to 6×) |
+| 2-finger drag | Pan when zoomed, otherwise scroll the laptop |
+| 2-finger tap | Reset zoom |
+
+The preview has a toolbar:
+- **👆 / 👁** switches between controlling the laptop and view-only, where touches only zoom and pan.
+- **⛶** goes full screen in landscape. In full screen, **⌨** opens the phone keyboard so you can type.
 - **⤢** switches between a small and a large preview.
 - ⚙ → **Screen preview quality**:
 
@@ -58,6 +72,18 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
   - Examples: Ctrl, then type `c` → Ctrl+C. Shift, then ← → select text. Win, then type `d` → show desktop.
 - **Shortcut buttons:** Copy, Paste, Cut, Undo, Redo, Select all, Save, Find. They use Ctrl on Windows and ⌘ on Mac.
 - **Screen preview:** shown above the keyboard too (🖥), so you can watch what you type. While the phone keyboard is open, the bottom tabs hide to make room.
+
+## Controls tab 🎛️
+- **Media:** ⏮ ⏯ ⏭ control whatever is playing (YouTube, Spotify, VLC…).
+- **Volume:** a slider plus mute.
+- **Brightness:** a slider. On a Mac, or a monitor that doesn't report its brightness, you get 🔅/🔆 buttons instead.
+- **Clipboard:**
+  - **Laptop → phone:** copy anything on the laptop and it appears in the list. With *Auto-copy to phone* on, it's copied to the phone clipboard automatically. Tap **Copy** or **Paste** on any item.
+  - **📤 Send phone clipboard:** puts the phone's clipboard on the laptop clipboard.
+  - **📋 Paste on laptop:** does the same and presses Ctrl+V (⌘V on Mac).
+  - The first time, Chrome asks to allow clipboard access.
+- **Power:** Lock, Display off, Sleep, Sign out, Restart, Shut down. The last four ask for confirmation first.
+- On **Mac**, Restart, Shut down and Sign out may ask once for permission to control "System Events".
 
 ## Voice typing
 Click into any text field on the laptop, open the **Voice** tab, tap the mic and speak. The text is typed wherever the cursor is.
