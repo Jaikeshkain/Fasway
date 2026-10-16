@@ -81,6 +81,24 @@ def lan_ips() -> list[str]:
     return ips or ["127.0.0.1"]
 
 
+def is_admin() -> bool | None:
+    """True/False on Windows; None elsewhere (macOS uses per-app permissions instead)."""
+    if sys.platform != "win32":
+        return None
+    from .input_win import is_elevated
+    return is_elevated()
+
+
+def relaunch_as_admin() -> bool:
+    """Start an elevated copy of Fasway (Windows shows the UAC prompt). False if the user declined."""
+    import ctypes
+    frozen = getattr(sys, "frozen", False)
+    exe = sys.executable
+    params = "--no-elevate" if frozen else "-m fasway --no-elevate"
+    cwd = None if frozen else str(Path(__file__).resolve().parent.parent)
+    return ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, cwd, 1) > 32
+
+
 class App:
     def __init__(self):
         self.cfg = load_config()
@@ -145,6 +163,23 @@ class App:
         ttk.Button(btns, text="Copy link", command=self.copy_link).pack(side="left", padx=4)
         ttk.Button(btns, text="New pairing code", command=self.new_token).pack(side="left", padx=4)
 
+        # Windows blocks input to apps running as Administrator (Task Manager...) unless we are admin too
+        if is_admin() is not None:
+            adm = tk.Frame(root, bg="white")
+            adm.pack(padx=16, pady=(4, 0))
+            if is_admin():
+                tk.Label(adm, text="🛡 Running as administrator – admin apps can be controlled too",
+                         font=(FONT, 9), fg="#0a7", bg="white").pack()
+            else:
+                tk.Label(adm, text="Not running as administrator: apps like Task Manager can't be "
+                                   "controlled from the phone.", font=(FONT, 9), fg="#a65e00", bg="white",
+                         wraplength=340, justify="center").pack()
+                ttk.Button(adm, text="Restart as administrator", command=self.restart_as_admin).pack(pady=(4, 0))
+            self.always_admin = tk.BooleanVar(value=bool(self.cfg.get("always_admin")))
+            tk.Checkbutton(adm, text="Always start as administrator", variable=self.always_admin,
+                           command=self.toggle_always_admin, bg="white", fg=FG, activebackground="white",
+                           font=(FONT, 9)).pack()
+
         self.status_var = tk.StringVar(value="Starting…")
         tk.Label(root, textvariable=self.status_var, bg="white", font=(FONT, 10, "bold"),
                  fg="#0a7").pack(pady=(4, 14))
@@ -185,6 +220,17 @@ class App:
             pass
         self.root.after(150, self._poll)
 
+    def toggle_always_admin(self):
+        self.cfg["always_admin"] = bool(self.always_admin.get())
+        save_config(self.cfg)
+
+    def restart_as_admin(self):
+        if relaunch_as_admin():
+            # the elevated copy takes over the same port; the phone reconnects by itself
+            self.root.destroy()
+            os._exit(0)
+        self.status_var.set("Administrator restart was cancelled")
+
     def quit(self):
         self.root.destroy()
         sys.exit(0)
@@ -194,6 +240,9 @@ class App:
 
 
 def main():
+    if is_admin() is False and "--no-elevate" not in sys.argv and load_config().get("always_admin"):
+        if relaunch_as_admin():
+            return   # the elevated copy runs Fasway; if the UAC prompt is declined we carry on normally
     App().run()
 
 

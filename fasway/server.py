@@ -18,6 +18,7 @@ from .actions import QuickActions, run_action
 from .platform_input import inp, screen_permission_problem, sysctl
 from .screen import ScreenGrabber, ScreenTrack
 
+INPUT_MSGS = {"m", "s", "b", "txt", "edit", "key", "point", "rel"}
 SYSTEM_MSGS = {"media", "vol", "bright", "power", "clip_set", "clip_get", "sys_get",
                "wins", "win", "open_url", "actions", "action_run", "action_save", "action_del", "action_move"}
 POWER_ACTIONS = {"lock", "display_off", "sleep", "restart", "shutdown", "signout"}
@@ -91,6 +92,8 @@ class FaswayServer:
                 try:
                     m = json.loads(msg.data)
                     t = str(m.get("t", ""))
+                    if t in INPUT_MSGS:
+                        await self._warn_if_admin_blocked(sess)
                     if t in ("b", "point") and m.get("a") in ("down", "up"):
                         btn = m.get("b", "left")
                         (sess["held"].add if m["a"] == "down" else sess["held"].discard)(btn)
@@ -113,6 +116,21 @@ class FaswayServer:
             self.on_clients(len(self.clients))
             log.info("phone disconnected")
         return ws
+
+    async def _warn_if_admin_blocked(self, sess: dict):
+        """Tell the phone (at most every 15 s) when an admin window is swallowing our input."""
+        check = getattr(inp, "blocking_admin_app", None)
+        now = asyncio.get_running_loop().time()
+        if not check or now - sess.get("admin_warned", -99) < 15 or now - sess.get("admin_checked", -99) < 1:
+            return
+        sess["admin_checked"] = now
+        app = check()
+        if app:
+            sess["admin_warned"] = now
+            log.info("input blocked: %s runs as administrator", app)
+            await sess["ws"].send_str(json.dumps({"t": "alert", "msg":
+                f"⚠️ {app} runs as administrator, so Windows blocks Fasway from controlling it. "
+                "Click “Restart as administrator” in the Fasway window on the laptop."}))
 
     # ---------- screen sharing (WebRTC; the websocket carries the signaling) ----------
     async def handle_screen(self, sess: dict, m: dict):
@@ -375,7 +393,14 @@ class FaswayServer:
 
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
-        await web.TCPSite(self._runner, "0.0.0.0", self.port, ssl_context=ctx).start()
+        for attempt in range(20):   # after "Restart as administrator" the old copy may still hold the port
+            try:
+                await web.TCPSite(self._runner, "0.0.0.0", self.port, ssl_context=ctx).start()
+                break
+            except OSError:
+                if attempt == 19:
+                    raise
+                await asyncio.sleep(0.5)
         log.info("listening on https://0.0.0.0:%d", self.port)
 
     async def kick_all(self):

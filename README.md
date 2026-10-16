@@ -167,7 +167,10 @@ Settings for the packaged app are stored in `~/Library/Application Support/Faswa
 ## Notes
 - If the QR doesn't open, choose a different **Laptop IP** in the window (your laptop has several network adapters).
 - **New pairing code** disconnects every phone; scan the QR again to reconnect.
-- Windows blocks typing into apps that run **as Administrator** unless Fasway also runs as Administrator.
+- **Admin apps:** Windows blocks every program from controlling apps that run **as Administrator** (Task Manager, admin terminals, installers, Registry Editor) unless that program also runs as Administrator. While such an app is in front, Fasway's touchpad and keyboard do nothing, and the phone shows a warning explaining why.
+  - Click **Restart as administrator** in the Fasway window (one UAC prompt). The phone reconnects by itself.
+  - Tick **Always start as administrator** to do this automatically every time.
+  - Even as Administrator, the lock screen, Ctrl+Alt+Del and UAC prompts can't be controlled remotely; Windows protects those screens.
 
 ## Layout
 ```

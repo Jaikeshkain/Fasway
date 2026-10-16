@@ -80,6 +80,74 @@ def _fix_foreground():
             user32.SetForegroundWindow(desktop)
 
 
+# ---------------- administrator (UIPI) ----------------
+# Windows silently drops injected input aimed at apps running as Administrator (Task Manager,
+# admin terminals, installers...) unless Fasway runs as Administrator too.
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+kernel32.OpenProcess.restype = wintypes.HANDLE
+_admin_cache: dict[int, tuple[float, str | None]] = {}
+
+
+_elevated: bool | None = None
+
+
+def is_elevated() -> bool:
+    global _elevated
+    if _elevated is None:
+        try:
+            _elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except (AttributeError, OSError):
+            _elevated = False
+    return _elevated
+
+
+def _process_admin_name(pid: int) -> str | None:
+    """Exe name if the process runs elevated (admin), else None."""
+    h = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(512)
+        n = wintypes.DWORD(512)
+        kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n))
+        name = buf.value.rsplit("\\", 1)[-1] or "an admin app"
+        tok = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(h, 0x0008, ctypes.byref(tok)):   # TOKEN_QUERY
+            return name   # a normal process may not read an elevated process's token
+        try:
+            elev, ret = wintypes.DWORD(), wintypes.DWORD()
+            advapi32.GetTokenInformation(tok, 20, ctypes.byref(elev), 4, ctypes.byref(ret))  # TokenElevation
+            return name if elev.value else None
+        finally:
+            kernel32.CloseHandle(tok)
+    finally:
+        kernel32.CloseHandle(h)
+
+
+def blocking_admin_app() -> str | None:
+    """Name of the active admin app that Windows won't let us control, or None."""
+    if is_elevated():
+        return None
+    fg = user32.GetForegroundWindow()
+    if not fg:
+        return None
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+    now = time.monotonic()
+    hit = _admin_cache.get(pid.value)
+    if hit and now - hit[0] < 5:
+        name = hit[1]
+    else:
+        name = _process_admin_name(pid.value)
+        _admin_cache[pid.value] = (now, name)
+    if not name:
+        return None
+    title = ctypes.create_unicode_buffer(80)
+    user32.GetWindowTextW(fg, title, 80)
+    return title.value or name.removesuffix(".exe")   # "Task Manager" reads better than "Taskmgr.exe"
+
+
 def _send(inputs):
     if not inputs:
         return
