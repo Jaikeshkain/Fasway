@@ -39,6 +39,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datef
 log = logging.getLogger("fasway")
 for noisy in ("aioice", "aiortc"):  # per-candidate ICE chatter; keep warnings only
     logging.getLogger(noisy).setLevel(logging.WARNING)
+# warns about unparsable monitor EDID on every brightness read, although brightness works fine
+logging.getLogger("screen_brightness_control").setLevel(logging.ERROR)
 
 
 def load_config() -> dict:
@@ -86,7 +88,7 @@ class App:
         cert, key = ensure_cert(DATA, self.ips)
         self.events: queue.Queue = queue.Queue()
         self.server = FaswayServer(self.cfg["token"], self.cfg["port"], cert, key,
-                                   on_clients=lambda n: self.events.put(("clients", n)))
+                                   on_clients=lambda n: self.events.put(("clients", n)), data_dir=DATA)
         self.thread = threading.Thread(target=self._run_server, daemon=True)
         self.thread.start()
         self._build_ui()

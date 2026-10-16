@@ -24,9 +24,11 @@
       <div class="screen-slot">
         <div id="screen" class="screen hidden">
           <video id="screenVid" autoplay playsinline muted></video>
+          <div id="cursorRing" class="cursor-ring hidden"></div>
           <div id="screenMsg" class="screen-msg">Connecting to screen…</div>
           <input id="fsInput" class="fs-input" type="text" autocomplete="off" autocapitalize="sentences" aria-label="Type on laptop">
           <div class="screen-tools">
+            <button id="screenAudio" class="off" aria-label="Laptop sound">🔇</button>
             <button id="screenMode" aria-label="Touch mode">👆</button>
             <button id="screenKbd" class="fs-only" aria-label="Keyboard">⌨</button>
             <button id="screenFull" aria-label="Full screen">⛶</button>
@@ -94,8 +96,42 @@
       </div>
     </section>
 
+    <!-- Apps: quick actions, open link, app switcher -->
+    <section id="tab-apps" class="tab">
+      <div class="card">
+        <h4>Quick actions <button id="qaEdit" class="link-btn">Edit</button></h4>
+        <div id="qaGrid" class="qa-grid"></div>
+      </div>
+
+      <div class="card">
+        <h4>Open link on laptop</h4>
+        <div class="url-row">
+          <input id="urlInput" type="url" inputmode="url" placeholder="https://…" autocomplete="off">
+          <button id="urlOpen">Open</button>
+        </div>
+        <button id="urlPaste" class="link-btn">📋 Open the link copied on this phone</button>
+      </div>
+
+      <div class="card">
+        <h4>Open windows <button id="winRefresh" class="link-btn" aria-label="Refresh">↻</button></h4>
+        <div id="winList" class="win-list"><div class="clip-empty">Loading…</div></div>
+      </div>
+    </section>
+
     <!-- Controls -->
     <section id="tab-ctl" class="tab">
+      <div class="card">
+        <h4>Laptop status <span id="uptime" class="muted-small"></span></h4>
+        <div class="status-grid">
+          <div class="stat"><div class="stat-label" id="batLabel">🔋 Battery</div><div class="stat-val" id="batVal">–</div>
+            <div class="bar"><i id="batBar"></i></div><div class="stat-sub" id="batSub"></div></div>
+          <div class="stat"><div class="stat-label">🧠 CPU</div><div class="stat-val" id="cpuVal">–</div>
+            <div class="bar"><i id="cpuBar"></i></div></div>
+          <div class="stat"><div class="stat-label">💾 RAM</div><div class="stat-val" id="ramVal">–</div>
+            <div class="bar"><i id="ramBar"></i></div><div class="stat-sub" id="ramSub"></div></div>
+        </div>
+      </div>
+
       <div class="card">
         <h4>Media</h4>
         <div class="media-row">
@@ -179,6 +215,7 @@
     <button data-tab="pad" class="active">🖱️<span>Touchpad</span></button>
     <button data-tab="kbd">⌨️<span>Keyboard</span></button>
     <button data-tab="voice">🎙️<span>Voice</span></button>
+    <button data-tab="apps">🧩<span>Apps</span></button>
     <button data-tab="ctl">🎛️<span>Controls</span></button>
   </nav>
 
@@ -200,6 +237,34 @@
           <option value="high">High (1080p, 30 fps)</option>
         </select></label>
       <label class="toggle"><input type="checkbox" id="haptics"> Vibrate on click</label>      <button id="closeSheet">Done</button>
+    </div>
+  </div>
+
+  <!-- Quick action editor -->
+  <div id="qaSheet" class="sheet hidden">
+    <div class="sheet-body">
+      <h3 id="qaTitle">New quick action</h3>
+      <div class="qa-form-row">
+        <input id="qaIcon" class="qa-icon-input" maxlength="4" aria-label="Icon (emoji)">
+        <input id="qaName" placeholder="Name" maxlength="40">
+      </div>
+      <label>What it does
+        <select id="qaType">
+          <option value="open">Open a website, app, file or folder</option>
+          <option value="text">Type text</option>
+          <option value="keys">Press shortcut keys</option>
+          <option value="macro">Macro (several steps)</option>
+          <option value="command">Run a command</option>
+        </select></label>
+      <textarea id="qaValue" rows="3"></textarea>
+      <div id="qaHelp" class="qa-help"></div>
+      <div class="qa-buttons">
+        <button id="qaDelete" class="danger">Delete</button>
+        <button id="qaLeft" aria-label="Move left">◀</button>
+        <button id="qaRight" aria-label="Move right">▶</button>
+        <button id="qaCancel">Cancel</button>
+        <button id="qaSave" class="primary">Save</button>
+      </div>
     </div>
   </div>
 

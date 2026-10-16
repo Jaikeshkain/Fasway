@@ -94,6 +94,69 @@ def step_brightness(up: bool):
     _special_key(NX["brightnessup" if up else "brightnessdown"])
 
 
+# ---------------- open / run ----------------
+
+def open_target(target: str):
+    """URL, file or folder -> `open`; otherwise treat it as an app name (`open -a Safari`)."""
+    import os
+    if "://" in target or os.path.exists(os.path.expanduser(target)):
+        subprocess.Popen(["open", os.path.expanduser(target)])
+    else:
+        subprocess.Popen(["open", "-a", target])
+
+
+def run_command(cmd: str):
+    subprocess.Popen(cmd, shell=True)
+
+
+# ---------------- app switcher (apps, not individual windows, on macOS) ----------------
+
+_icon_cache: dict[str, str] = {}
+
+
+def list_windows(have_icons: set[str] | None = None) -> dict:
+    import base64
+    import io
+    from AppKit import NSWorkspace
+    from PIL import Image
+    have_icons = have_icons or set()
+    wins, icons = [], {}
+    front = NSWorkspace.sharedWorkspace().frontmostApplication()
+    for app in NSWorkspace.sharedWorkspace().runningApplications():
+        if app.activationPolicy() != 0:          # regular apps only (no background agents)
+            continue
+        key = str(app.bundleIdentifier() or app.localizedName())
+        if key not in _icon_cache:
+            try:
+                tiff = app.icon().TIFFRepresentation()
+                im = Image.open(io.BytesIO(bytes(tiff))).convert("RGBA").resize((40, 40))
+                buf = io.BytesIO(); im.save(buf, "PNG", optimize=True)
+                _icon_cache[key] = base64.b64encode(buf.getvalue()).decode()
+            except Exception:
+                _icon_cache[key] = ""
+        if _icon_cache[key] and key not in have_icons:
+            icons[key] = _icon_cache[key]
+        wins.append({"id": int(app.processIdentifier()), "title": str(app.localizedName()), "app": "",
+                     "icon": key if _icon_cache[key] else None, "min": bool(app.isHidden()), "max": False,
+                     "active": bool(front and front.processIdentifier() == app.processIdentifier())})
+    return {"windows": wins, "icons": icons}
+
+
+def window_action(pid: int, action: str) -> bool:
+    from AppKit import NSRunningApplication
+    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    if app is None:
+        return False
+    if action in ("focus", "max"):
+        app.unhide()
+        app.activateWithOptions_(1 << 1)   # NSApplicationActivateIgnoringOtherApps
+    elif action == "min":
+        app.hide()
+    elif action == "close":
+        app.terminate()                    # polite quit: apps can still ask to save
+    return True
+
+
 # ---------------- power ----------------
 
 def power(action: str):

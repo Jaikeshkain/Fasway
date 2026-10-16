@@ -1,5 +1,6 @@
 """Windows input injection via SendInput (mouse + Unicode keyboard)."""
 import ctypes
+import time
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -50,9 +51,39 @@ user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
 user32.SendInput.restype = wintypes.UINT
 
 
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetShellWindow.restype = wintypes.HWND
+user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+user32.IsIconic.argtypes = (wintypes.HWND,)
+user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+user32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+_fg_checked = 0.0
+
+
+def _fix_foreground():
+    """When every window is minimized, Windows may leave a minimized or invisible window active
+    (e.g. UltraViewer's hidden 0x0 window). Some of those swallow injected input, and keystrokes
+    sent to a minimized window go nowhere. Hand the focus to the desktop in that case."""
+    global _fg_checked
+    now = time.monotonic()
+    if now - _fg_checked < 0.3:
+        return
+    _fg_checked = now
+    fg = user32.GetForegroundWindow()
+    if not fg:
+        return
+    r = wintypes.RECT()
+    user32.GetWindowRect(fg, ctypes.byref(r))
+    if user32.IsIconic(fg) or not user32.IsWindowVisible(fg) or r.right - r.left <= 1 or r.bottom - r.top <= 1:
+        desktop = user32.GetShellWindow()
+        if desktop and desktop != fg:
+            user32.SetForegroundWindow(desktop)
+
+
 def _send(inputs):
     if not inputs:
         return
+    _fix_foreground()
     arr = (INPUT * len(inputs))(*inputs)
     user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
 
@@ -83,6 +114,7 @@ def cursor_pos() -> tuple[int, int]:
 
 def move_to(x: int, y: int):
     """Absolute position in virtual-screen pixels (same coordinates as screen capture)."""
+    _fix_foreground()
     user32.SetCursorPos(int(x), int(y))
 
 

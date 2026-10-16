@@ -34,19 +34,27 @@ You can adjust speed, acceleration, scroll speed and natural scrolling with ⚙ 
 ## Live screen preview (WebRTC)
 Tap **🖥** in the top bar to show the laptop screen, with its cursor, above the touchpad (also shown on the Keyboard tab).
 
-**Touch the preview to control the laptop directly:**
+**Touch the preview to control the laptop.** The mode button cycles 🖱 → 👆 → 👁. A blue ring highlights the cursor, which is tiny at phone size.
+
+**🖱 Trackpad mode (default):** the preview works as an invisible touchpad, so your finger never covers what you're looking at.
 
 | On the preview | Does |
 |---|---|
-| Tap | Left click there (tap twice to double-click) |
-| Long-press | Right click |
-| Drag | Drag or select |
-| Pinch | Zoom the preview (up to 6×) |
-| 2-finger drag | Pan when zoomed, otherwise scroll the laptop |
-| 2-finger tap | Reset zoom |
+| Slide one finger (anywhere) | Moves the cursor from where it is, by the same distance your finger moves on the preview |
+| Tap | Click wherever the cursor is |
+| Double-tap | Double click |
+| Double-tap, then slide | Drag or select (the ring fills in while held) |
+| Long-press / 2-finger tap | Right click |
+| 2-finger slide | Scroll |
+| Pinch | Zoom the preview around the cursor (up to 6×); the view then follows the cursor |
 
-The preview has a toolbar:
-- **👆 / 👁** switches between controlling the laptop and view-only, where touches only zoom and pan.
+**👆 Direct mode:** tap exactly where you want to click, long-press to right-click, drag to drag. Pinch zooms, 2-finger drag pans (when zoomed) or scrolls, and a 2-finger tap resets the zoom.
+
+**👁 View only:** touches only zoom and pan the preview.
+
+The preview's toolbar:
+- **🔇 / 🔊** plays the laptop's sound on the phone, in the same stream as the video. It's Windows only; a Mac would need an extra audio driver.
+- **🖱 / 👆 / 👁** switches the touch mode.
 - **⛶** goes full screen in landscape. In full screen, **⌨** opens the phone keyboard so you can type.
 - **⤢** switches between a small and a large preview.
 - ⚙ → **Screen preview quality**:
@@ -73,7 +81,24 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
 - **Shortcut buttons:** Copy, Paste, Cut, Undo, Redo, Select all, Save, Find. They use Ctrl on Windows and ⌘ on Mac.
 - **Screen preview:** shown above the keyboard too (🖥), so you can watch what you type. While the phone keyboard is open, the bottom tabs hide to make room.
 
+## Apps tab 🧩
+- **Quick actions:** your own one-tap buttons, saved on the laptop (`actions.json`). It comes with some starter buttons: File Explorer, Task Manager, Screenshot, Show desktop, Settings, Notepad, YouTube, Google.
+  - Tap **Edit** to change or delete a button, move it with ◀ ▶, or add one with ＋.
+
+  | Type | Example |
+  |---|---|
+  | Open | `https://youtube.com` · `notepad` · `calc` · `C:\Users\me\Downloads` |
+  | Type text | your email, address or signature |
+  | Shortcut keys | `ctrl+shift+esc` · `win+d` · `ctrl+c, ctrl+v` |
+  | Macro (one step per line) | `key win+r` / `wait 400` / `type notepad` / `key enter` / `open …` / `cmd …` |
+  | Run a command | `shutdown /h` (runs without a window) |
+
+- **Open link on laptop:** paste a link, or tap *Open the link copied on this phone*, and it opens in the laptop's browser. Links in the clipboard list also get a 🌐 button. Only http(s) links are allowed.
+- **Open windows:** every open laptop window with its icon. Tap a row to switch to it; ▁ minimizes, ▢ maximizes or restores, ✕ closes (after you confirm, and the app can still ask to save). On a Mac this lists apps instead of windows.
+
 ## Controls tab 🎛️
+- **Laptop status:** battery (charging or time left), CPU and RAM use, and how long the laptop has been on.
+- **Alerts:** you get a pop-up and a vibration when the charger is plugged in or unplugged, when the battery drops to 20% or 10%, and when it's fully charged.
 - **Media:** ⏮ ⏯ ⏭ control whatever is playing (YouTube, Spotify, VLC…).
 - **Volume:** a slider plus mute.
 - **Brightness:** a slider. On a Mac, or a monitor that doesn't report its brightness, you get 🔅/🔆 buttons instead.

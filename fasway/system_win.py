@@ -5,11 +5,13 @@ Functions here may block (COM, WMI), so the server calls them on its system thre
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 import time
 from ctypes import wintypes
 
 from . import input_win
+from .windows_win import list_windows, window_action  # noqa: F401  (app switcher)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -160,6 +162,17 @@ def step_brightness(up: bool):
     cur = get_brightness()
     if cur is not None:
         set_brightness(cur + (10 if up else -10))
+
+
+# ---------------- open / run ----------------
+
+def open_target(target: str):
+    """Open a URL, file, folder or app (e.g. 'notepad', 'calc', 'https://...') like the Run dialog."""
+    os.startfile(target)
+
+
+def run_command(cmd: str):
+    subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
 # ---------------- power ----------------

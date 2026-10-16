@@ -19,6 +19,7 @@ if exist dist\Fasway rmdir /s /q dist\Fasway
   --name Fasway ^
   --icon "%CD%\packaging\build\Fasway.ico" ^
   --add-data "%CD%\web;web" ^
+  --collect-data soundcard ^
   --paths "%CD%" ^
   --distpath dist --workpath packaging\build\pyi --specpath packaging\build ^
   packaging\fasway_app.py || goto :err
