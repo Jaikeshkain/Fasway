@@ -30,8 +30,10 @@ WEB_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
 
 class FaswayServer:
-    def __init__(self, token: str, port: int, cert: Path, key: Path, on_clients=None, data_dir: Path | None = None):
+    def __init__(self, token: str, port: int, cert: Path, key: Path, on_clients=None, data_dir: Path | None = None,
+                 on_local_ip=None):
         self.token = token
+        self.on_local_ip = on_local_ip or (lambda ip: None)  # which laptop address phones actually reach
         if data_dir is None:  # tests construct the server without a data folder
             import tempfile
             data_dir = Path(cert).parent if cert else Path(tempfile.gettempdir()) / "fasway-test"
@@ -79,6 +81,9 @@ class FaswayServer:
         self.clients.add(ws)
         self.on_clients(len(self.clients))
         log.info("phone connected from %s", request.remote)
+        sock = request.transport.get_extra_info("sockname") if request.transport else None
+        if sock:
+            self.on_local_ip(sock[0])
         sess = {"pc": None, "track": None, "ws": ws, "cur_task": None, "rx": 0.0, "ry": 0.0,
                 "held": set()}  # mouse buttons the phone is holding down
         await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win"}))

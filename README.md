@@ -4,7 +4,19 @@ Use your Android phone as a **touchpad** and **voice keyboard** (English, Hindi 
 
 ## Start
 
-**Windows:** double-click **`run.bat`** (the first run installs dependencies into `.venv`).
+**Windows:** double-click **`run.bat`**. The first run installs dependencies into `.venv`. Fasway then runs **in the system tray** (the blue **F** icon next to the clock), with no console window.
+- **Tray icon:** green dot = a phone is connected. Click it to show the pairing QR; right-click for options and **Quit**.
+- **Closing the QR window** hides it; Fasway keeps running.
+- **Running `run.bat` again** while Fasway is running just opens its window.
+- **Start with Windows** (tick it in the window or the tray menu): Fasway starts silently at sign-in. Together with **Always run as administrator**, it starts with admin rights **without a UAC prompt each time** (it uses a Task Scheduler task; you approve one prompt when you turn it on).
+- **Log file:** `data/fasway.log`.
+
+### The phone link that keeps working
+Each laptop gets its own permanent address, for example **`https://fasway-7uble.local:8443`**, which the QR code uses by default.
+- It's announced on the network (mDNS/Bonjour), so it doesn't depend on the laptop's IP address or computer name.
+- The same bookmark or home-screen shortcut works on any Wi-Fi, even after the IP changes.
+- When the laptop joins a different network, the tray shows a notification and the address keeps working.
+- If a phone can't open `.local` addresses, pick an IP address in the **Address** list instead.
 
 **macOS:** see [macOS setup](#macos-setup) below.
 
