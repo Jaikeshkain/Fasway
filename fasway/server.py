@@ -15,12 +15,14 @@ from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
 from . import audio, status
 from .actions import QuickActions, run_action
-from .platform_input import inp, screen_permission_problem, sysctl
+from .devices import DeviceStore
+from .platform_input import inp, nowplaying, screen_permission_problem, sysctl
 from .screen import ScreenGrabber, ScreenTrack
 
 INPUT_MSGS = {"m", "s", "b", "txt", "edit", "key", "point", "rel"}
 SYSTEM_MSGS = {"media", "vol", "bright", "power", "clip_set", "clip_get", "sys_get",
-               "wins", "win", "open_url", "actions", "action_run", "action_save", "action_del", "action_move"}
+               "wins", "win", "open_url", "actions", "action_run", "action_save", "action_del", "action_move",
+               "np_get", "np_cmd"}
 POWER_ACTIONS = {"lock", "display_off", "sleep", "restart", "shutdown", "signout"}
 CLIP_MAX = 20000  # chars pushed to the phone
 
@@ -31,12 +33,18 @@ WEB_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
 class FaswayServer:
     def __init__(self, token: str, port: int, cert: Path, key: Path, on_clients=None, data_dir: Path | None = None,
-                 on_local_ip=None):
+                 on_local_ip=None, on_pair_request=None, on_devices=None):
         self.token = token
         self.on_local_ip = on_local_ip or (lambda ip: None)  # which laptop address phones actually reach
+        # on_pair_request(name, ip, answer): ask the user; call answer(True/False). None = accept (tests)
+        self.on_pair_request = on_pair_request
+        self.on_devices = on_devices or (lambda: None)       # trusted-phone list changed
         if data_dir is None:  # tests construct the server without a data folder
             import tempfile
             data_dir = Path(cert).parent if cert else Path(tempfile.gettempdir()) / "fasway-test"
+        self.devices = DeviceStore(data_dir)
+        self._pending_pairs: dict[str, asyncio.Future] = {}
+        self._dev_sockets: dict[str, set] = {}
         self.actions = QuickActions(data_dir)
         self._alerts = status.BatteryAlerts()
         self._status_task: asyncio.Task | None = None
@@ -72,24 +80,28 @@ class FaswayServer:
 
     # ---------- websocket ----------
     async def ws(self, request):
-        given = request.query.get("t", "")
-        if not hmac.compare_digest(given, self.token):
+        q = request.query
+        given, dev_id, dev_key = q.get("t", ""), q.get("d", "")[:64], q.get("k", "")[:128]
+        dev_name = (q.get("n", "") or "Phone").strip()[:60]
+        known = self.devices.verify(dev_id, dev_key)
+        # a trusted phone logs in with its own key; the QR pairing code only lets a phone *ask* to pair
+        if not known and not hmac.compare_digest(given, self.token):
             raise web.HTTPForbidden(text="bad token")
+        if not known and (len(dev_id) < 8 or len(dev_key) < 20):
+            raise web.HTTPForbidden(text="phone app out of date: reload the page")
 
         ws = web.WebSocketResponse(heartbeat=10, max_msg_size=1 << 20)
         await ws.prepare(request)
-        self.clients.add(ws)
-        self.on_clients(len(self.clients))
-        log.info("phone connected from %s", request.remote)
-        sock = request.transport.get_extra_info("sockname") if request.transport else None
-        if sock:
-            self.on_local_ip(sock[0])
         sess = {"pc": None, "track": None, "ws": ws, "cur_task": None, "rx": 0.0, "ry": 0.0,
-                "held": set()}  # mouse buttons the phone is holding down
-        await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win"}))
-        if self._clip_task is None:
-            self._clip_task = asyncio.create_task(self._watch_clipboard())
-            self._status_task = asyncio.create_task(self._watch_battery())
+                "held": set(),  # mouse buttons the phone is holding down
+                "dev": dev_id, "approved": False}
+        if known:
+            self.devices.touch(dev_id, dev_name)
+            await self._admit(request, ws, sess)
+        else:
+            log.info("pairing request from %s (%s)", dev_name, request.remote)
+            await ws.send_str(json.dumps({"t": "pair_wait"}))
+            asyncio.create_task(self._pair(request, ws, sess, dev_key, dev_name))
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -97,6 +109,10 @@ class FaswayServer:
                 try:
                     m = json.loads(msg.data)
                     t = str(m.get("t", ""))
+                    if not sess["approved"]:      # waiting for approval: only keep-alive pings
+                        if t == "ping":
+                            await ws.send_str(json.dumps({"t": "pong", "id": m.get("id")}))
+                        continue
                     if t in INPUT_MSGS:
                         await self._warn_if_admin_blocked(sess)
                     if t in ("b", "point") and m.get("a") in ("down", "up"):
@@ -117,10 +133,66 @@ class FaswayServer:
             for btn in sess["held"]:   # phone vanished mid-drag: don't leave the button stuck down
                 inp.button(btn, "up")
             await self._close_rtc(sess)
-            self.clients.discard(ws)
-            self.on_clients(len(self.clients))
-            log.info("phone disconnected")
+            if ws in self.clients:
+                self.clients.discard(ws)
+                self.on_clients(len(self.clients))
+                log.info("phone disconnected")
+            self._dev_sockets.get(dev_id, set()).discard(ws)
         return ws
+
+    # ---------- pairing ----------
+    async def _admit(self, request, ws, sess):
+        """A trusted phone: start the session."""
+        sess["approved"] = True
+        self.clients.add(ws)
+        self._dev_sockets.setdefault(sess["dev"], set()).add(ws)
+        self.on_clients(len(self.clients))
+        log.info("phone connected: %s (%s)", self.devices.devices.get(sess["dev"], {}).get("name", "?"), request.remote)
+        sock = request.transport.get_extra_info("sockname") if request.transport else None
+        if sock:
+            self.on_local_ip(sock[0])
+        await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win"}))
+        if self._clip_task is None:
+            self._clip_task = asyncio.create_task(self._watch_clipboard())
+            self._status_task = asyncio.create_task(self._watch_battery())
+
+    async def _pair(self, request, ws, sess, dev_key: str, dev_name: str):
+        dev_id = sess["dev"]
+        loop = asyncio.get_running_loop()
+        fut = self._pending_pairs.get(dev_id)
+        if fut is None:   # one prompt per phone, even if it reconnects while waiting
+            fut = self._pending_pairs[dev_id] = loop.create_future()
+            if self.on_pair_request is None:
+                fut.set_result(True)   # no UI (tests / headless): accept
+            else:
+                def answer(ok, f=fut):   # called from the UI thread
+                    loop.call_soon_threadsafe(lambda: f.done() or f.set_result(bool(ok)))
+                self.on_pair_request(dev_name, request.remote, answer)
+        try:
+            ok = await asyncio.wait_for(asyncio.shield(fut), 120)
+        except asyncio.TimeoutError:
+            ok = False
+        finally:
+            if fut.done():
+                self._pending_pairs.pop(dev_id, None)
+        if not ok:
+            log.info("pairing declined: %s", dev_name)
+            await ws.close(code=4003, message=b"declined")
+            return
+        if not self.devices.verify(dev_id, dev_key):   # new phone, or approved again with a new key
+            self.devices.add(dev_id, dev_key, dev_name)
+            self.on_devices()
+            log.info("paired phone: %s", dev_name)
+        if ws.closed:
+            return
+        await ws.send_str(json.dumps({"t": "paired"}))
+        await self._admit(request, ws, sess)
+
+    async def remove_device(self, dev_id: str):
+        self.devices.remove(dev_id)
+        self.on_devices()
+        for ws in list(self._dev_sockets.pop(dev_id, set())):
+            await ws.close(code=4004, message=b"removed")
 
     async def _warn_if_admin_blocked(self, sess: dict):
         """Tell the phone (at most every 15 s) when an admin window is swallowing our input."""
@@ -263,6 +335,20 @@ class FaswayServer:
             await asyncio.sleep(0.15)   # let the window settle, then send the fresh list
             res = await self._sys(sysctl.list_windows, set(m.get("have") or []))
             return {"t": "wins", "ok": ok, **res}
+        # ---- now playing ----
+        if t == "np_get":
+            try:
+                return {"t": "np", **await nowplaying.get_state(set(m.get("have") or []))}
+            except Exception as e:
+                log.debug("now playing unavailable: %s", e)
+                return {"t": "np", "sessions": [], "current": None, "art": {}}
+        if t == "np_cmd":
+            pos = m.get("pos")
+            ok = await nowplaying.command(m.get("id"), str(m.get("a")), float(pos) if pos is not None else None)
+            if not ok and m.get("a") in ("play_pause", "next", "prev"):   # app doesn't take commands: media key
+                await self._sys(sysctl.media, {"play_pause": "playpause", "next": "nexttrack", "prev": "prevtrack"}[m["a"]])
+            await asyncio.sleep(0.25)   # let the app update its state, then send it back
+            return {"t": "np", **await nowplaying.get_state(set(m.get("have") or []))}
         # ---- open a link in the laptop's browser ----
         if t == "open_url":
             url = str(m.get("url", "")).strip()
@@ -383,6 +469,8 @@ class FaswayServer:
             inp.hotkey(str(m.get("k", "")))
         elif t == "ping":
             return {"t": "pong", "id": m.get("id")}
+        elif t == "diag":   # browser diagnostics from the phone (e.g. why full screen failed), for the log
+            log.info("phone diagnostics: %s", json.dumps(m, ensure_ascii=False)[:1500])
         return None
 
     # ---------- lifecycle ----------

@@ -24,27 +24,72 @@
   // re-scanning a QR while the page is open only changes the hash -> reload to re-pair
   window.addEventListener("hashchange", () => location.reload());
   const token = store.get("token", "");
-  if (!token) $("#noToken").classList.remove("hidden");
+
+  // ---------------- this phone's identity ----------------
+  // A random id + secret key, made once and kept in this browser. The laptop stores only a hash of the
+  // key and asks you to approve a new phone once; after that the phone logs in with its key.
+  let device = store.get("device", null);
+  if (!device || !device.id || !device.key) {
+    const rnd = (n) => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(n))))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    device = { id: rnd(12), key: rnd(32) };
+    store.set("device", device);
+  }
+  let deviceName = store.get("deviceName", "");
+  async function detectDeviceName() { // e.g. "Pixel 8 · Chrome"
+    let model = "";
+    try { model = (await navigator.userAgentData.getHighEntropyValues(["model"])).model || ""; } catch {}
+    if (!model) { const m = navigator.userAgent.match(/Android [\d.]+; ([^;)]+)/); model = m ? m[1].replace(/ Build.*/, "") : ""; }
+    if (!model || model === "K") model = /Android/.test(navigator.userAgent) ? "Android phone" : /iPhone|iPad/.test(navigator.userAgent) ? "iPhone" : "Phone";
+    const browser = /Edg\//.test(navigator.userAgent) ? "Edge" : /SamsungBrowser/.test(navigator.userAgent) ? "Samsung Internet"
+      : /Firefox/.test(navigator.userAgent) ? "Firefox" : /Chrome/.test(navigator.userAgent) ? "Chrome" : "Browser";
+    return `${model} · ${browser}`;
+  }
+  if (!token && !store.get("paired", false)) $("#noToken").classList.remove("hidden");
+
+  // ---------------- pairing screens ----------------
+  const pairBox = $("#pairBox");
+  function showPair(kind) {
+    const t = {
+      wait: ["💻", "Approve this phone on your laptop", "A window opened on the laptop. Click <b>Allow</b> there to finish pairing.", false],
+      declined: ["🚫", "Not allowed", "The laptop declined this phone (or nobody answered in time).", true],
+      removed: ["🔓", "This phone was removed", "It was removed from the laptop's trusted phones. Scan the QR code in the Fasway window to pair again.", false],
+    }[kind];
+    if (!t) { pairBox.classList.add("hidden"); return; }
+    $("#pairIcon").textContent = t[0]; $("#pairTitle").textContent = t[1]; $("#pairText").innerHTML = t[2];
+    $("#pairRetry").classList.toggle("hidden", !t[3]);
+    $("#pairIcon").style.animation = kind === "wait" ? "" : "none";
+    pairBox.classList.remove("hidden");
+  }
+  $("#pairRetry").addEventListener("click", () => { showPair(null); retry = 0; connect(); });
 
   // ---------------- websocket ----------------
   let ws = null, retry = 0, retryTimer = null, lastSeen = 0;
   const statusEl = $("#status");
   function setStatus(cls, text) { statusEl.className = "status " + cls; statusEl.querySelector("b").textContent = text; }
 
-  function connect() {
-    if (!token) return;
+  async function connect() {
+    if (!token && !store.get("paired", false)) return;
     clearTimeout(retryTimer);
     if (ws) { ws.onclose = ws.onmessage = ws.onopen = null; try { ws.close(); } catch {} } // never two sockets
     setStatus("wait", "Connecting…");
+    if (!deviceName) { deviceName = await detectDeviceName(); store.set("deviceName", deviceName); }
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${scheme}://${location.host}/ws?t=${encodeURIComponent(token)}`);
-    ws.onopen = () => { retry = 0; lastSeen = Date.now(); setStatus("on", "Connected"); syncScreen(); };
+    const q = new URLSearchParams({ t: token, d: device.id, k: device.key, n: deviceName });
+    ws = new WebSocket(`${scheme}://${location.host}/ws?${q}`);
+    ws.onopen = () => { retry = 0; lastSeen = Date.now(); };
     ws.onmessage = (e) => {
       lastSeen = Date.now(); // any message (incl. pong) proves the connection is alive
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.t === "rtc_answer") onRtcAnswer(m);
       else if (m.t === "cur") onCursor(m);
-      else if (m.t === "hello") setLaptopOS(m.os);
+      else if (m.t === "np") renderNowPlaying(m);
+      else if (m.t === "pair_wait") { showPair("wait"); setStatus("wait", "Waiting for approval"); }
+      else if (m.t === "paired") { showPair(null); notify("✅ Phone approved – you're connected"); }
+      else if (m.t === "hello") { // admitted: the session is live
+        store.set("paired", true); showPair(null);
+        setStatus("on", "Connected"); setLaptopOS(m.os); syncScreen();
+      }
       else if (m.t === "sys") onSys(m);
       else if (m.t === "clip") onClip(m);
       else if (m.t === "wins") renderWins(m);
@@ -55,6 +100,8 @@
     };
     ws.onclose = (e) => {
       stopScreen(false);
+      if (e.code === 4003) { setStatus("off", "Not allowed"); showPair("declined"); return; }
+      if (e.code === 4004) { setStatus("off", "Removed"); store.set("paired", false); showPair("removed"); return; }
       setStatus("off", e.code === 4001 ? "Re-scan QR" : "Offline");
       if (e.code === 4001) return;
       retryTimer = setTimeout(connect, Math.min(4000, 300 * 2 ** retry++));
@@ -97,7 +144,7 @@
     $$(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + b.dataset.tab));
     syncScreen();
     if (b.dataset.tab === "kbd") kbdInput.focus(); // inside the tap, so Android opens the keyboard
-    if (b.dataset.tab === "ctl") refreshSys();
+    if (b.dataset.tab === "ctl") { refreshSys(); send({ t: "np_get", have: Object.keys(npArtCache) }); }
     if (b.dataset.tab === "apps") { send({ t: "actions" }); refreshApps(); }
   }));
 
@@ -213,9 +260,9 @@
   if (!MODES[settings.screenMode]) settings.screenMode = "trackpad";
   const mode = () => settings.screenMode;
 
-  function toast(msg) {
+  function toast(msg, ms = 1200) {
     screenToast.textContent = msg; screenToast.classList.remove("hidden");
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => screenToast.classList.add("hidden"), 1200);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => screenToast.classList.add("hidden"), ms);
   }
   function applyView() {
     const W = screenEl.clientWidth, H = screenEl.clientHeight;
@@ -278,12 +325,20 @@
   // trackpad-mode buttons: always deliver the pending movement first, so clicks land where the cursor ended up
   function tpButton(b, a) { flushRel(false); send({ t: "b", b, a }); }
 
-  // screen coordinates -> fraction of the laptop screen (accounts for zoom and letterboxing)
-  function toFrac(cx, cy, clamp) {
-    if (!vid.videoWidth) return null;
+  // Touch -> position inside the preview box. All gesture maths uses these local coordinates, so it is
+  // the same whether the preview is upright or turned sideways by the CSS landscape mode.
+  let rotated = false;
+  function P(t) {
+    if (rotated) return { x: t.clientY, y: window.innerWidth - t.clientX }; // box turned 90° clockwise, top-left at (100vw, 0)
     const r = screenEl.getBoundingClientRect();
-    const lx = (cx - r.left - screenEl.clientLeft - view.tx) / view.s;
-    const ly = (cy - r.top - screenEl.clientTop - view.ty) / view.s;
+    return { x: t.clientX - r.left - screenEl.clientLeft, y: t.clientY - r.top - screenEl.clientTop };
+  }
+
+  // position inside the preview -> fraction of the laptop screen (accounts for zoom and letterboxing)
+  function toFrac(px, py, clamp) {
+    if (!vid.videoWidth) return null;
+    const lx = (px - view.tx) / view.s;
+    const ly = (py - view.ty) / view.s;
     const { cw, ch, ox, oy } = contentBox();
     let fx = (lx - ox) / cw, fy = (ly - oy) / ch;
     if (clamp) { fx = Math.min(1, Math.max(0, fx)); fy = Math.min(1, Math.max(0, fy)); }
@@ -296,8 +351,8 @@
     if (!ptRaf) { ptRaf = true; requestAnimationFrame(() => { ptRaf = false; if (pendingPt) { point(pendingPt); pendingPt = null; } }); }
   }
   function two(e) {
-    const [a, b] = e.touches;
-    return { cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2, d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) };
+    const a = P(e.touches[0]), b = P(e.touches[1]);
+    return { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
   }
   function endDrag() {
     pendingPt = null; // the release below goes to the final position anyway; never move after it
@@ -311,7 +366,7 @@
     e.preventDefault();
     if (mode() === "trackpad") {
       if (e.touches.length === 1 && !sg) {
-        const x = e.touches[0].clientX, y = e.touches[0].clientY, now = performance.now();
+        const { x, y } = P(e.touches[0]), now = performance.now();
         sg = { mode: "tp-pending", x0: x, y0: y, lx: x, ly: y, lt: now, t0: now,
           // second touch right after a tap = double-tap; sliding it drags
           dragArmed: now - lastScreenTap.t < TP_DOUBLE_MS && Math.hypot(x - lastScreenTap.x, y - lastScreenTap.y) < 60 };
@@ -332,7 +387,7 @@
     }
     const control = mode() === "direct";
     if (e.touches.length === 1 && !sg) {
-      const x = e.touches[0].clientX, y = e.touches[0].clientY;
+      const { x, y } = P(e.touches[0]);
       sg = { mode: "pending1", x0: x, y0: y, t0: performance.now(), control };
       if (control) sg.timer = setTimeout(() => {
         if (!sg || sg.mode !== "pending1") return;
@@ -351,7 +406,7 @@
     if (!sg) return;
     e.preventDefault();
     if (e.touches.length === 1 && sg.mode.startsWith("tp-")) {
-      const x = e.touches[0].clientX, y = e.touches[0].clientY, now = performance.now();
+      const { x, y } = P(e.touches[0]), now = performance.now();
       if (sg.mode === "tp-pending") {
         if (Math.hypot(x - sg.x0, y - sg.y0) < 8) return;
         clearTimeout(sg.timer);
@@ -368,7 +423,7 @@
       return;
     }
     if (e.touches.length === 1 && ["pending1", "drag", "pan1"].includes(sg.mode)) {
-      const x = e.touches[0].clientX, y = e.touches[0].clientY;
+      const { x, y } = P(e.touches[0]);
       if (sg.mode === "pending1") {
         if (Math.hypot(x - sg.x0, y - sg.y0) < 10) return;
         clearTimeout(sg.timer);
@@ -397,7 +452,6 @@
       }
       if (sg.mode === "zoom") {
         // keep the spot that was under the fingers under the fingers while zooming/panning
-        const r = screenEl.getBoundingClientRect();
         const s = Math.min(6, Math.max(1, sg.s0 * t.d / sg.c0.d));
         if (mode() === "trackpad" && cur) {
           // trackpad: fingers can be anywhere, so zoom around the laptop cursor instead
@@ -405,8 +459,8 @@
           const px = (sg.anchor[0] - sg.tx0) / sg.s0, py = (sg.anchor[1] - sg.ty0) / sg.s0;
           view.s = s; view.tx = sg.anchor[0] - px * s; view.ty = sg.anchor[1] - py * s;
         } else {
-          const px = (sg.c0.cx - r.left - sg.tx0) / sg.s0, py = (sg.c0.cy - r.top - sg.ty0) / sg.s0;
-          view.s = s; view.tx = t.cx - r.left - px * s; view.ty = t.cy - r.top - py * s;
+          const px = (sg.c0.cx - sg.tx0) / sg.s0, py = (sg.c0.cy - sg.ty0) / sg.s0;
+          view.s = s; view.tx = t.cx - px * s; view.ty = t.cy - py * s;
         }
         applyView();
       } else if (sg.mode === "scroll") {
@@ -465,16 +519,78 @@
     toast(audioOn ? "Laptop sound on" : "Laptop sound off");
     buzz();
   });
-  $("#screenFull").addEventListener("click", async () => {
-    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
-    try {
-      await screenEl.requestFullscreen({ navigationUI: "hide" });
-      await screen.orientation.lock("landscape").catch(() => {});
-    } catch { toast("Full screen not available"); }
-  });
-  document.addEventListener("fullscreenchange", () => {
+  // Full screen: the preview is first made to cover the page with CSS (always works, also on iPhone),
+  // then the whole page goes browser-fullscreen and rotates to landscape where the browser allows it.
+  // (Fullscreening just the preview element was unreliable on phones: the request could silently hang.)
+  // Landscape: if the browser can lock the screen to landscape, great. Otherwise (Chrome refuses full screen
+  // on pages with a certificate warning, auto-rotate off...) the preview is turned sideways with CSS.
+  let fsMode = false, rotManual = null; // rotManual: null = automatic, true/false = chosen with ⟳
+  function setRotated(on) {
+    if (on === rotated) return;
+    rotated = on;
+    document.body.classList.toggle("fs-rot", on);
     resetView();
-    if (!document.fullscreenElement) { try { screen.orientation.unlock(); } catch {} fsInput.blur(); }
+  }
+  const autoRotate = () => { if (fsMode && rotManual === null) setRotated(window.innerHeight > window.innerWidth); };
+  window.addEventListener("resize", () => setTimeout(autoRotate, 120)); // the phone really rotated -> undo the CSS turn
+  $("#screenRotate").addEventListener("click", () => { rotManual = !rotated; setRotated(rotManual); buzz(); });
+
+  function enterFs() {
+    if (fsMode) return;
+    fsMode = true; rotManual = null;
+    document.body.classList.add("fs-mode");
+    history.pushState({ fasway: "fs" }, "");          // the back gesture leaves full screen, not the page
+    resetView();
+    let settled = false;
+    const settle = () => { if (!settled) { settled = true; autoRotate(); } };
+    setTimeout(settle, 700);                           // the browser didn't answer quickly: rotate ourselves
+    const root = document.documentElement;
+    const req = root.requestFullscreen || root.webkitRequestFullscreen;
+    // diagnostics: what did the browser do with the request? (sent to the laptop's log)
+    const diag = { t: "diag", what: "fullscreen", ua: navigator.userAgent, fsEnabled: document.fullscreenEnabled,
+      activation: navigator.userActivation ? navigator.userActivation.isActive : null, focus: document.hasFocus(),
+      displayMode: ["standalone", "minimal-ui", "fullscreen"].find((m) => matchMedia(`(display-mode: ${m})`).matches) || "browser",
+      viewport: [innerWidth, innerHeight], hasOrientationLock: !!(screen.orientation && screen.orientation.lock),
+      fullscreen: "pending", orientation: "not tried", events: [] };
+    const onFsEvent = (e) => diag.events.push(e.type + ":" + !!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFsEvent);
+    document.addEventListener("fullscreenerror", onFsEvent);
+    setTimeout(() => {
+      document.removeEventListener("fullscreenchange", onFsEvent);
+      document.removeEventListener("fullscreenerror", onFsEvent);
+      if (diag.fullscreen !== "ok" || diag.orientation !== "ok") send(diag); // report problems only
+      if (diag.fullscreen === "pending") toast("Chrome didn't answer the full-screen request – using the page's own full screen", 3500);
+    }, 3000);
+    if (!req) { diag.fullscreen = "no API"; settle(); return; }
+    let p;
+    try { p = req.call(root, { navigationUI: "hide" }); } catch (e) { diag.fullscreen = "threw: " + e.message; settle(); return; }
+    Promise.resolve(p)
+      .then(() => { diag.fullscreen = "ok"; diag.orientation = "pending";
+        return screen.orientation && screen.orientation.lock ? screen.orientation.lock("landscape") : Promise.reject(new Error("no orientation lock")); })
+      .then(() => { diag.orientation = "ok"; setTimeout(settle, 300); })   // real landscape: autoRotate keeps it upright
+      .catch((e) => {
+        const msg = ((e && e.message) || "not allowed").slice(0, 80);
+        if (diag.fullscreen === "pending") diag.fullscreen = "rejected: " + msg; else diag.orientation = "rejected: " + msg;
+        settle();
+        if (rotated) toast("Chrome blocked landscape (" + msg.slice(0, 60) + ") – rotated the view instead", 3500);
+      });
+  }
+  function exitFs(fromHistory) {
+    if (!fsMode) return;
+    fsMode = false;
+    setRotated(false);
+    document.body.classList.remove("fs-mode");
+    fsInput.blur();
+    try { screen.orientation.unlock(); } catch {}
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (!fromHistory && history.state && history.state.fasway === "fs") history.back();
+    resetView();
+  }
+  $("#screenFull").addEventListener("click", () => { fsMode ? exitFs(false) : enterFs(); buzz(); });
+  window.addEventListener("popstate", () => exitFs(true));
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement && fsMode) exitFs(false); // browser left full screen (e.g. back gesture)
+    else resetView();
   });
   $("#screenKbd").addEventListener("click", () => {
     if (document.activeElement === fsInput) fsInput.blur(); else fsInput.focus();
@@ -738,7 +854,69 @@
     };
   };
 
-  $$("[data-media]").forEach((b) => b.addEventListener("click", () => { send({ t: "media", k: b.dataset.media }); buzz(); }));
+  // ---------------- now playing ----------------
+  // Title / artist / artwork / position of what the laptop is playing (Spotify, YouTube in a browser, VLC...).
+  // The buttons control the selected app directly; with nothing detected they fall back to media keys.
+  const npArtCache = {};      // art key -> data URL (the laptop sends each artwork once)
+  let np = null, npSel = null, npSeeking = false, npAt = 0;
+  const fmtTime = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${x}` : `${m}:${x}`; };
+  const npSession = () => np && (np.sessions.find((s) => s.id === npSel) || np.sessions.find((s) => s.id === np.current) || np.sessions[0]);
+  const npCmd = (a, extra = {}) => send({ t: "np_cmd", id: npSession() && npSession().id, a, have: Object.keys(npArtCache), ...extra });
+
+  function renderNowPlaying(m) {
+    for (const [k, b64] of Object.entries(m.art || {})) npArtCache[k] = "data:image/jpeg;base64," + b64;
+    np = m; npAt = performance.now();
+    if (npSel && !m.sessions.some((s) => s.id === npSel)) npSel = null;
+    const box = $("#npSessions");                       // one chip per app when several are playing
+    box.classList.toggle("hidden", m.sessions.length < 2);
+    box.innerHTML = "";
+    const cur = npSession();
+    for (const s of m.sessions) {
+      const b = document.createElement("button");
+      b.textContent = (s.status === "playing" ? "▶ " : "") + s.app;
+      b.classList.toggle("sel", cur && s.id === cur.id);
+      b.addEventListener("click", () => { npSel = s.id; renderNowPlaying(np); buzz(); });
+      box.appendChild(b);
+    }
+    $("#npTitle").textContent = cur ? cur.title || "Unknown title" : "Nothing playing";
+    $("#npArtist").textContent = cur ? [cur.artist, cur.album].filter(Boolean).join(" — ") : "Play something on the laptop";
+    $("#npApp").textContent = cur ? cur.app : "";
+    const art = cur && (cur.art ? npArtCache[cur.art] : cur.art_url);
+    $("#npArt").classList.toggle("hidden", !art); $("#npArtEmpty").classList.toggle("hidden", !!art);
+    if (art && $("#npArt").src !== art) $("#npArt").src = art;
+    $("#npPlay").textContent = cur && cur.status === "playing" ? "⏸" : "▶";
+    $("#npSeek").classList.toggle("hidden", !(cur && cur.dur > 0));
+    $("#npBar").disabled = !(cur && cur.can_seek);
+    tickNowPlaying();
+  }
+  function tickNowPlaying() { // move the bar smoothly between updates from the laptop
+    const cur = npSession();
+    if (!cur || !(cur.dur > 0) || npSeeking) return;
+    const pos = Math.min(cur.dur, cur.pos + (cur.status === "playing" ? (performance.now() - npAt) / 1000 : 0));
+    $("#npBar").value = Math.round(pos / cur.dur * 1000);
+    $("#npPos").textContent = fmtTime(pos); $("#npDur").textContent = fmtTime(cur.dur);
+  }
+  setInterval(tickNowPlaying, 250);
+  setInterval(() => { if ($("#tab-ctl").classList.contains("active") && document.visibilityState === "visible") send({ t: "np_get", have: Object.keys(npArtCache) }); }, 1500);
+
+  const npBar = $("#npBar");
+  npBar.addEventListener("input", () => { npSeeking = true; const cur = npSession(); if (cur) $("#npPos").textContent = fmtTime(npBar.value / 1000 * cur.dur); });
+  npBar.addEventListener("change", () => {
+    const cur = npSession();
+    if (cur) { const pos = npBar.value / 1000 * cur.dur; cur.pos = pos; npAt = performance.now(); npCmd("seek", { pos }); buzz(); }
+    npSeeking = false;
+  });
+
+  const NP_ACTION = { playpause: "play_pause", nexttrack: "next", prevtrack: "prev" };
+  $$("[data-media]").forEach((b) => b.addEventListener("click", () => {
+    const cur = npSession();
+    if (cur) {
+      if (b.dataset.media === "playpause") { cur.status = cur.status === "playing" ? "paused" : "playing"; renderNowPlaying(np); } // instant feedback
+      npCmd(NP_ACTION[b.dataset.media]);
+    } else send({ t: "media", k: b.dataset.media });
+    buzz();
+  }));
 
   const volSlider = $("#volSlider"), volOut = $("#volOut"), muteBtn = $("#muteBtn");
   const brightSlider = $("#brightSlider"), brightOut = $("#brightOut");

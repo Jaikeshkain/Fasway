@@ -11,6 +11,13 @@ Use your Android phone as a **touchpad** and **voice keyboard** (English, Hindi 
 - **Start with Windows** (tick it in the window or the tray menu): Fasway starts silently at sign-in. Together with **Always run as administrator**, it starts with admin rights **without a UAC prompt each time** (it uses a Task Scheduler task; you approve one prompt when you turn it on).
 - **Log file:** `data/fasway.log`.
 
+### Pairing and trusted phones
+- **First connection:** the first time a phone connects, the laptop asks **"A phone wants to connect"** with the phone's name and address. You choose **Allow** or **Deny**, and the phone shows *"Approve this phone on your laptop"* while it waits.
+- **After that:** each approved phone has its own secret key; the laptop stores only a hash of it in `data/devices.json`. The phone then connects without asking, even after **New pairing code**.
+- **On their own, the QR code and link are not enough to control the laptop:** a phone also needs your approval.
+- **Trusted phones** in the Fasway window lists each phone, whether it's connected, and when it was last seen. **Remove** disconnects a phone immediately; it has to be approved again to come back.
+- **New pairing code** only stops old QR codes from *asking* to pair; trusted phones keep working.
+
 ### The phone link that keeps working
 Each laptop gets its own permanent address, for example **`https://fasway-7uble.local:8443`**, which the QR code uses by default.
 - It's announced on the network (mDNS/Bonjour), so it doesn't depend on the laptop's IP address or computer name.
@@ -67,7 +74,9 @@ Tap **🖥** in the top bar to show the laptop screen, with its cursor, above th
 The preview's toolbar:
 - **🔇 / 🔊** plays the laptop's sound on the phone, in the same stream as the video. It's Windows only; a Mac would need an extra audio driver.
 - **🖱 / 👆 / 👁** switches the touch mode.
-- **⛶** goes full screen in landscape. In full screen, **⌨** opens the phone keyboard so you can type.
+- **⛶** goes full screen in landscape. In full screen, **⌨** opens the phone keyboard so you can type. The back gesture or ⛶ leaves full screen.
+  - If Chrome won't rotate the page (for example because of the certificate warning, or because auto-rotate is off), the preview is turned sideways for you: just hold the phone sideways.
+  - **⟳** switches between sideways and upright by hand.
 - **⤢** switches between a small and a large preview.
 - ⚙ → **Screen preview quality**:
 
@@ -111,7 +120,12 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
 ## Controls tab 🎛️
 - **Laptop status:** battery (charging or time left), CPU and RAM use, and how long the laptop has been on.
 - **Alerts:** you get a pop-up and a vibration when the charger is plugged in or unplugged, when the battery drops to 20% or 10%, and when it's fully charged.
-- **Media:** ⏮ ⏯ ⏭ control whatever is playing (YouTube, Spotify, VLC…).
+- **Now Playing:** artwork, title and artist of whatever plays on the laptop (Spotify, YouTube or Netflix in Chrome or Edge, VLC, the Media Player app…).
+  - The **seek bar** shows elapsed and total time, and you can drag it to jump.
+  - ⏮ ⏯ ⏭ control that app directly.
+  - When several apps are playing, chips let you pick one.
+  - With nothing detected, the buttons act as normal media keys.
+  - On a Mac it supports Spotify and Apple Music.
 - **Volume:** a slider plus mute.
 - **Brightness:** a slider. On a Mac, or a monitor that doesn't report its brightness, you get 🔅/🔆 buttons instead.
 - **Clipboard:**

@@ -51,9 +51,17 @@ main { flex: 1; min-height: 0; position: relative; }
 .screen-tools button { padding: 4px 9px; font-size: 15px; background: rgba(0,0,0,.6); border-radius: 8px; min-width: 34px; }
 .screen-tools button.off { opacity: .55; }
 .fs-only { display: none; }
-.screen:fullscreen .fs-only { display: inline-block; }
-.screen:fullscreen { aspect-ratio: auto; max-height: none; height: 100%; width: 100%; border: 0; border-radius: 0; }
-.screen:fullscreen #screenSize { display: none; }
+/* full screen: the preview covers the whole page (works with or without the browser's fullscreen API) */
+body.fs-mode #screen { position: fixed !important; inset: 0 !important; z-index: 40; width: 100vw !important;
+  height: 100dvh !important; max-height: none !important; aspect-ratio: auto !important; border: 0; border-radius: 0; }
+/* sideways landscape without the browser's help: the full-screen box is turned 90° clockwise, so the
+   phone is simply held sideways (works even with auto-rotate off / when Chrome refuses full screen) */
+body.fs-mode.fs-rot #screen { inset: auto !important; top: 0 !important; left: 100vw !important;
+  width: 100dvh !important; height: 100vw !important; transform: rotate(90deg); transform-origin: 0 0; }
+body.fs-mode .fs-only { display: inline-block; }
+body.fs-mode #screenSize { display: none; }
+body.fs-mode .screen-tools { right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); }
+body.fs-mode .screen-tools button { padding: 7px 11px; font-size: 17px; }
 .fs-input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
 .screen-toast { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: rgba(0,0,0,.7);
   padding: 4px 12px; border-radius: 999px; font-size: 12px; pointer-events: none; z-index: 2; }
@@ -64,6 +72,21 @@ main { flex: 1; min-height: 0; position: relative; }
 .card h4 { margin: 0; font-size: 14px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
 .toggle.small { font-size: 12px; font-weight: 400; }
 .toggle.small input { width: 15px; height: 15px; }
+/* now playing */
+.np { display: flex; gap: 12px; align-items: center; }
+.np-art-wrap { width: 64px; height: 64px; flex-shrink: 0; border-radius: 10px; overflow: hidden; background: #2b3140;
+  display: flex; align-items: center; justify-content: center; }
+.np-art { width: 100%; height: 100%; object-fit: cover; }
+.np-art-empty { font-size: 26px; opacity: .6; }
+.np-info { flex: 1; min-width: 0; }
+.np-title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-artist { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-app { font-size: 11px; color: var(--accent); margin-top: 2px; }
+.np-seek { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.np-seek input { flex: 1; accent-color: var(--accent); height: 24px; }
+.np-sessions { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.np-sessions button { flex: 0 0 auto; padding: 5px 12px; font-size: 12px; border-radius: 999px; background: var(--panel2); }
+.np-sessions button.sel { background: var(--accent); }
 .media-row { display: flex; gap: 10px; }
 .media-row button { flex: 1; font-size: 22px; padding: 10px; }
 .media-row button.big { flex: 1.4; background: var(--accent); }
@@ -202,4 +225,8 @@ nav button.active { color: var(--text); background: var(--panel); }
 .toast { position: fixed; left: 50%; top: max(56px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 30;
   background: #2b3140; color: var(--text); padding: 8px 16px; border-radius: 999px; font-size: 13px;
   box-shadow: 0 4px 16px rgba(0,0,0,.4); max-width: 90vw; text-align: center; pointer-events: none; }
+.pair-icon { font-size: 54px; margin-bottom: 8px; animation: pulseIcon 1.6s ease-in-out infinite; }
+@keyframes pulseIcon { 50% { transform: scale(1.08); opacity: .75; } }
+.overlay p { color: var(--muted); line-height: 1.5; }
+.overlay button { margin-top: 14px; background: var(--accent); padding: 12px 22px; }
 .hidden { display: none !important; }

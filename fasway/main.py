@@ -38,7 +38,8 @@ def _data_dir() -> Path:
 DATA = _data_dir()
 CONFIG = DATA / "config.json"
 DEFAULT_PORT = 8443
-CONTROL_PORT = 47391   # localhost only: keeps Fasway single-instance and lets a 2nd launch open the window
+# localhost only: keeps Fasway single-instance and lets a 2nd launch open the window (env override for tests)
+CONTROL_PORT = int(os.environ.get("FASWAY_CONTROL_PORT", "47391"))
 FONT = "Helvetica Neue" if sys.platform == "darwin" else "Segoe UI"
 FG, MUTED = "#111111", "#555555"  # explicit colours: macOS dark mode would otherwise draw white-on-white
 
@@ -168,7 +169,9 @@ class App:
         cert, key = ensure_cert(DATA, self.ips, self.hostname)
         self.server = FaswayServer(self.cfg["token"], self.cfg["port"], cert, key, data_dir=DATA,
                                    on_clients=lambda n: self.events.put(("clients", n)),
-                                   on_local_ip=lambda ip: self.events.put(("local_ip", ip)))
+                                   on_local_ip=lambda ip: self.events.put(("local_ip", ip)),
+                                   on_pair_request=lambda name, ip, answer: self.events.put(("pair", (name, ip, answer))),
+                                   on_devices=lambda: self.events.put(("devices", None)))
         threading.Thread(target=self._run_server, name="server", daemon=True).start()
         threading.Thread(target=self._control_loop, args=(lock,), name="control", daemon=True).start()
 
@@ -287,7 +290,12 @@ class App:
 
         self.status_var = tk.StringVar(value="Starting…")
         tk.Label(root, textvariable=self.status_var, bg="white", font=(FONT, 10, "bold"),
-                 fg="#0a7").pack(pady=(6, 14))
+                 fg="#0a7").pack(pady=(6, 4))
+
+        # trusted phones: only these can connect without asking; Remove disconnects one immediately
+        self.phones_frame = tk.Frame(root, bg="white")
+        self.phones_frame.pack(fill="x", padx=20, pady=(2, 14))
+        self._render_phones()
 
         self.refresh_qr()
         root.after(100, self._poll)
@@ -310,12 +318,85 @@ class App:
         self.root.clipboard_append(self.url())
 
     def new_token(self):
+        """Old QR codes/links can no longer be used to ask for pairing. Trusted phones stay trusted."""
         self.cfg["token"] = secrets.token_urlsafe(16)
         save_config(self.cfg)
         self.server.token = self.cfg["token"]
-        if self.server.loop:
-            asyncio.run_coroutine_threadsafe(self.server.kick_all(), self.server.loop)
         self.refresh_qr()
+
+    # ---------- trusted phones ----------
+    @staticmethod
+    def _ago(ts: int) -> str:
+        s = max(0, int(time.time()) - int(ts))
+        if s < 90:
+            return "just now"
+        for unit, n in (("day", 86400), ("hour", 3600), ("min", 60)):
+            if s >= n:
+                v = s // n
+                return f"{v} {unit}{'s' if v > 1 and unit != 'min' else ''} ago"
+        return "just now"
+
+    def _render_phones(self):
+        f = self.phones_frame
+        for w in f.winfo_children():
+            w.destroy()
+        devices = self.server.devices.listing()
+        online = {d for d, socks in self.server._dev_sockets.items() if socks}
+        tk.Label(f, text=f"Trusted phones ({len(devices)})" if devices else
+                 "No trusted phones yet – a new phone must be approved here",
+                 font=(FONT, 9, "bold"), fg=MUTED, bg="white", anchor="w").pack(fill="x")
+        for d in devices:
+            row = tk.Frame(f, bg="#f5f6f8")
+            row.pack(fill="x", pady=2)
+            state = "● connected" if d["id"] in online else f"last seen {self._ago(d.get('last_seen', 0))}"
+            tk.Label(row, text=f"📱 {d['name']}", font=(FONT, 9), fg=FG, bg="#f5f6f8", anchor="w").pack(side="left", padx=6, pady=3)
+            tk.Label(row, text=state, font=(FONT, 8), fg="#0a7" if d["id"] in online else MUTED,
+                     bg="#f5f6f8").pack(side="left")
+            ttk.Button(row, text="Remove", width=8, command=lambda d=d: self._remove_phone(d)).pack(side="right", padx=4, pady=2)
+
+    def _remove_phone(self, d: dict):
+        from tkinter import messagebox
+        if not messagebox.askyesno("Remove phone", f"Remove “{d['name']}”?\n\nIt is disconnected now and has to "
+                                                   "be approved again to reconnect.", parent=self.root):
+            return
+        if self.server.loop:
+            asyncio.run_coroutine_threadsafe(self.server.remove_device(d["id"]), self.server.loop)
+
+    def _ask_pair(self, name: str, ip: str, answer):
+        """'Allow this phone?' - shown even when the main window is hidden in the tray."""
+        win = tk.Toplevel(self.root)
+        win.title("Fasway – new phone")
+        win.configure(bg="white")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        done = {"v": False}
+
+        def reply(ok: bool):
+            if not done["v"]:
+                done["v"] = True
+                answer(ok)
+                win.destroy()
+
+        tk.Label(win, text="📱 A phone wants to connect", font=(FONT, 13, "bold"), fg=FG, bg="white").pack(padx=24, pady=(18, 6))
+        tk.Label(win, text=name, font=(FONT, 11), fg=FG, bg="white").pack()
+        tk.Label(win, text=f"from {ip}", font=(FONT, 9), fg=MUTED, bg="white").pack()
+        tk.Label(win, text="Only allow phones you own: it will be able to control this laptop.",
+                 font=(FONT, 9), fg="#a65e00", bg="white", wraplength=300, justify="center").pack(padx=24, pady=(10, 6))
+        b = tk.Frame(win, bg="white")
+        b.pack(pady=(4, 18))
+        ttk.Button(b, text="Deny", command=lambda: reply(False)).pack(side="left", padx=6)
+        allow = ttk.Button(b, text="Allow", command=lambda: reply(True))
+        allow.pack(side="left", padx=6)
+        win.protocol("WM_DELETE_WINDOW", lambda: reply(False))
+        win.after(115_000, lambda: reply(False))   # phone gives up after 2 minutes anyway
+        win.update_idletasks()
+        x = win.winfo_screenwidth() // 2 - win.winfo_width() // 2
+        y = win.winfo_screenheight() // 3 - win.winfo_height() // 2
+        win.geometry(f"+{x}+{y}")
+        win.lift()
+        win.focus_force()
+        allow.focus_set()
+        self.tray.notify(f"{name} wants to connect. Allow or deny it on the laptop.")
 
     def show(self):
         self.root.deiconify()
@@ -342,6 +423,11 @@ class App:
                     self.phones = val
                     self.status_var.set(f"● {val} phone connected" if val else "Waiting for phone…")
                     self.tray.set_connected(val)
+                    self._render_phones()
+                elif kind == "devices":
+                    self._render_phones()
+                elif kind == "pair":
+                    self._ask_pair(*val)
                 elif kind == "status":
                     self.status_var.set("Waiting for phone…" if val == "running" else val)
                 elif kind == "local_ip":

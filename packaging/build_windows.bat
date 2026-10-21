@@ -22,6 +22,7 @@ if exist dist\Fasway rmdir /s /q dist\Fasway
   --collect-data soundcard ^
   --hidden-import pystray._win32 ^
   --collect-submodules zeroconf ^
+  --collect-submodules winrt ^
   --paths "%CD%" ^
   --distpath dist --workpath packaging\build\pyi --specpath packaging\build ^
   packaging\fasway_app.py || goto :err

@@ -31,6 +31,7 @@
             <button id="screenAudio" class="off" aria-label="Laptop sound">🔇</button>
             <button id="screenMode" aria-label="Touch mode">👆</button>
             <button id="screenKbd" class="fs-only" aria-label="Keyboard">⌨</button>
+            <button id="screenRotate" class="fs-only" aria-label="Rotate">⟳</button>
             <button id="screenFull" aria-label="Full screen">⛶</button>
             <button id="screenSize" aria-label="Resize preview">⤢</button>
           </div>
@@ -134,9 +135,23 @@
 
       <div class="card">
         <h4>Media</h4>
+        <div id="npSessions" class="np-sessions hidden"></div>
+        <div id="np" class="np">
+          <div class="np-art-wrap"><img id="npArt" class="np-art hidden" alt=""><span id="npArtEmpty" class="np-art-empty">🎵</span></div>
+          <div class="np-info">
+            <div id="npTitle" class="np-title">Nothing playing</div>
+            <div id="npArtist" class="np-artist"></div>
+            <div id="npApp" class="np-app"></div>
+          </div>
+        </div>
+        <div id="npSeek" class="np-seek hidden">
+          <span id="npPos">0:00</span>
+          <input type="range" id="npBar" min="0" max="1000" value="0" aria-label="Seek">
+          <span id="npDur">0:00</span>
+        </div>
         <div class="media-row">
           <button data-media="prevtrack" aria-label="Previous">⏮</button>
-          <button data-media="playpause" class="big" aria-label="Play / pause">⏯</button>
+          <button data-media="playpause" id="npPlay" class="big" aria-label="Play / pause">⏯</button>
           <button data-media="nexttrack" aria-label="Next">⏭</button>
         </div>
         <div class="slider-row">
@@ -269,6 +284,15 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
+  <div id="pairBox" class="overlay hidden">
+    <div>
+      <div id="pairIcon" class="pair-icon">💻</div>
+      <h2 id="pairTitle">Approve this phone on your laptop</h2>
+      <p id="pairText">A window opened on the laptop. Click <b>Allow</b> there to finish pairing.</p>
+      <button id="pairRetry" class="hidden">Ask again</button>
+    </div>
+  </div>
 
   <div id="noToken" class="overlay hidden">
     <div>
