@@ -25,6 +25,7 @@ def new_device_id() -> str:
 
 class Announcer:
     def __init__(self, device_id: str, port: int, label: str):
+        self.device_id = device_id
         self.hostname = f"fasway-{device_id}.local"
         self.port = port
         self.label = label
@@ -36,7 +37,8 @@ class Announcer:
     def _make_info(self, ips: list[str]) -> ServiceInfo:
         return ServiceInfo(SERVICE, f"{self.label}.{SERVICE}",
                            addresses=[socket.inet_aton(ip) for ip in ips], port=self.port,
-                           server=self.hostname + ".", properties={"host": self.hostname, "v": "1"})
+                           server=self.hostname + ".",
+                           properties={"host": self.hostname, "id": self.device_id, "v": "1"})
 
     def update(self, ips: list[str]):
         """(Re)announce with these addresses. Only reachable ones should be passed: phones try them in order."""

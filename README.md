@@ -2,6 +2,9 @@
 
 Use your Android phone as a **touchpad** and **voice keyboard** (English, Hindi and mixed Hinglish) for your Windows laptop or Mac.
 
+## Android app
+A native Android app lives in [`app/`](app/README.md). It pairs by scanning the QR, finds the laptop on any Wi-Fi by itself, pins the laptop's certificate (no "Not secure" warning), and has real landscape full screen and reliable clipboard copy. The web app below keeps working too.
+
 ## Start
 
 **Windows:** double-click **`run.bat`**. The first run installs dependencies into `.venv`. Fasway then runs **in the system tray** (the blue **F** icon next to the clock), with no console window.

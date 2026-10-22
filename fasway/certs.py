@@ -11,6 +11,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 
+def cert_fingerprint(cert_path: Path) -> str:
+    """SHA-256 of the certificate (DER), hex - what the Android app pins."""
+    cert = x509.load_pem_x509_certificate(Path(cert_path).read_bytes())
+    return cert.fingerprint(hashes.SHA256()).hex()
+
+
 def ensure_cert(data_dir: Path, ips: list[str], hostname: str | None = None) -> tuple[Path, Path]:
     """Create the certificate once and keep it.
 

@@ -1,0 +1,216 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+
+import 'discovery.dart';
+import 'identity.dart';
+import 'laptop.dart';
+
+enum LinkState { offline, connecting, waitingApproval, connected, declined, removed, wrongLaptop }
+
+/// One live connection to the paired laptop (same WebSocket protocol as the web app).
+///
+/// * Trusts exactly the laptop's certificate (SHA-256 pinned from the QR code).
+/// * Tries the address found by mDNS discovery first, then the last working IPs, then the QR host.
+/// * Handles pairing approval, removal, a keep-alive watchdog and automatic reconnects.
+class Connection extends ChangeNotifier {
+  Connection(this.laptop, this.identity, this.discovery, {required this.onLaptopChanged}) {
+    discovery.addListener(_onDiscovery);
+  }
+
+  final Laptop laptop;
+  final Identity identity;
+  final Discovery discovery;
+  final void Function(Laptop) onLaptopChanged; // persist learned fingerprint / IPs
+
+  LinkState state = LinkState.offline;
+  String laptopOs = 'win';
+  String? lastError;
+  String? address; // the address currently connected to
+
+  final _messages = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get messages => _messages.stream;
+
+  WebSocket? _ws;
+  Timer? _retryTimer, _watchdog;
+  int _retry = 0;
+  DateTime _lastSeen = DateTime.now();
+  bool _stopped = false;
+
+  bool get isConnected => state == LinkState.connected;
+
+  void _set(LinkState s) {
+    if (state == s) return;
+    state = s;
+    notifyListeners();
+  }
+
+  void _onDiscovery() {
+    // the laptop just showed up on the network: don't wait for the next retry
+    if (!isConnected && state != LinkState.connecting && discovery.found.containsKey(laptop.id) &&
+        state != LinkState.declined && state != LinkState.removed) {
+      reconnectNow();
+    }
+  }
+
+  List<String> _candidates() {
+    final list = <String>[];
+    final f = discovery.found[laptop.id];
+    if (f != null) list.add(f.ip);
+    list.addAll(laptop.ips);
+    list.add(laptop.host);
+    return list.toSet().toList();
+  }
+
+  bool _checkCert(X509Certificate cert) {
+    final fp = sha256.convert(cert.der).toString();
+    if (laptop.fp.isEmpty) {
+      laptop.fp = fp; // older QR without fingerprint: trust on first use, then pin
+      onLaptopChanged(laptop);
+      return true;
+    }
+    return fp == laptop.fp;
+  }
+
+  Future<void> connect() async {
+    _stopped = false;
+    if (state == LinkState.connecting) return;
+    _retryTimer?.cancel();
+    _set(LinkState.connecting);
+    final q = Uri(queryParameters: {'t': laptop.token, 'd': identity.id, 'k': identity.key, 'n': identity.name}).query;
+    var wrongCert = false;
+    for (final addr in _candidates()) {
+      if (_stopped) return;
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4)
+        ..badCertificateCallback = (cert, host, port) => _checkCert(cert);
+      try {
+        final ws = await WebSocket.connect('wss://$addr:${laptop.port}/ws?$q', customClient: client)
+            .timeout(const Duration(seconds: 6));
+        _attach(ws, addr);
+        return;
+      } on WebSocketException catch (e) {
+        // reached the laptop but it refused the upgrade (HTTP 403): pairing code no longer valid
+        // and this phone isn't trusted (removed, or a new pairing code was made)
+        lastError = '$addr: $e';
+        if ('$e'.contains('not upgraded')) {
+          _set(LinkState.removed);
+          return;
+        }
+      } on HandshakeException catch (e) {
+        // something answered, but with a different certificate: not our laptop (keep looking)
+        lastError = 'certificate does not match ($addr): $e';
+        wrongCert = true;
+      } catch (e) {
+        lastError = '$addr: $e';
+      }
+    }
+    _set(wrongCert ? LinkState.wrongLaptop : LinkState.offline);
+    _scheduleRetry();
+  }
+
+  void _attach(WebSocket ws, String addr) {
+    _ws = ws;
+    address = addr;
+    _retry = 0;
+    _lastSeen = DateTime.now();
+    ws.pingInterval = const Duration(seconds: 10);
+    if (!laptop.ips.contains(addr) && RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(addr)) {
+      laptop.ips = [addr, ...laptop.ips.where((a) => a != addr)].take(4).toList();
+      onLaptopChanged(laptop);
+    }
+    ws.listen(
+      (data) {
+        _lastSeen = DateTime.now();
+        if (data is! String) return;
+        final Map<String, dynamic> m;
+        try {
+          m = jsonDecode(data) as Map<String, dynamic>;
+        } catch (_) {
+          return;
+        }
+        switch (m['t']) {
+          case 'pair_wait':
+            _set(LinkState.waitingApproval);
+          case 'hello':
+            laptopOs = (m['os'] ?? 'win') as String;
+            _set(LinkState.connected);
+        }
+        _messages.add(m);
+      },
+      onDone: () => _onClosed(ws),
+      onError: (_) => _onClosed(ws),
+      cancelOnError: true,
+    );
+    _watchdog?.cancel();
+    _watchdog = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (_ws != ws) return;
+      if (DateTime.now().difference(_lastSeen) > const Duration(seconds: 9)) {
+        ws.close(); // silently dead (Wi-Fi switch, laptop asleep): reconnect
+        return;
+      }
+      send({'t': 'ping', 'id': DateTime.now().millisecondsSinceEpoch});
+    });
+  }
+
+  void _onClosed(WebSocket ws) {
+    if (_ws != ws) return;
+    _ws = null;
+    _watchdog?.cancel();
+    final code = ws.closeCode;
+    if (code == 4003) {
+      _set(LinkState.declined);
+    } else if (code == 4004) {
+      _set(LinkState.removed);
+    } else {
+      _set(LinkState.offline);
+      _scheduleRetry();
+    }
+  }
+
+  void _scheduleRetry() {
+    if (_stopped) return;
+    _retryTimer?.cancel();
+    final delay = Duration(milliseconds: (300 * (1 << _retry.clamp(0, 4))).clamp(300, 4000));
+    _retry++;
+    _retryTimer = Timer(delay, connect);
+  }
+
+  void reconnectNow() {
+    _retry = 0;
+    final old = _ws;
+    _ws = null;
+    old?.close();
+    state = LinkState.offline;
+    connect();
+  }
+
+  /// Sends a message; returns false when not connected.
+  bool send(Map<String, dynamic> m) {
+    final ws = _ws;
+    if (ws == null || ws.readyState != WebSocket.open) return false;
+    if (state != LinkState.connected && m['t'] != 'ping') return false;
+    ws.add(jsonEncode(m));
+    return true;
+  }
+
+  void disconnect() {
+    _stopped = true;
+    _retryTimer?.cancel();
+    _watchdog?.cancel();
+    _ws?.close();
+    _ws = null;
+    _set(LinkState.offline);
+  }
+
+  @override
+  void dispose() {
+    discovery.removeListener(_onDiscovery);
+    disconnect();
+    _messages.close();
+    super.dispose();
+  }
+}

@@ -20,7 +20,7 @@ import qrcode
 from PIL import ImageTk
 
 from . import autostart
-from .certs import ensure_cert
+from .certs import cert_fingerprint, ensure_cert
 from .discovery import Announcer, new_device_id
 from .platform_input import permission_problem
 from .server import FaswayServer
@@ -167,6 +167,7 @@ class App:
         self._announce()
 
         cert, key = ensure_cert(DATA, self.ips, self.hostname)
+        self.cert_fp = cert_fingerprint(cert)   # the native app pins this (in the QR) instead of a CA
         self.server = FaswayServer(self.cfg["token"], self.cfg["port"], cert, key, data_dir=DATA,
                                    on_clients=lambda n: self.events.put(("clients", n)),
                                    on_local_ip=lambda ip: self.events.put(("local_ip", ip)),
@@ -220,7 +221,10 @@ class App:
 
     # ---------- ui ----------
     def url(self) -> str:
-        return f"https://{self.addr_var.get().split(' ')[0]}:{self.cfg['port']}/#t={self.cfg['token']}"
+        # t = pairing code · id = this laptop (matches the mDNS announcement) · fp = certificate fingerprint.
+        # The web app only reads t; the Android app uses id to find the laptop and fp to pin its certificate.
+        return (f"https://{self.addr_var.get().split(' ')[0]}:{self.cfg['port']}/"
+                f"#t={self.cfg['token']}&id={self.cfg['device_id']}&fp={self.cert_fp}")
 
     def _address_choices(self) -> list[str]:
         return [f"{self.hostname}  (any Wi-Fi)"] + self.ips
