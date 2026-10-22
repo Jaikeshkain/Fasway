@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -19,15 +21,16 @@ class AppState extends ChangeNotifier {
   Connection? connection;
 
   static Future<AppState> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final s = AppState._(prefs, Settings(prefs), await Identity.load());
+    final prefs = await SharedPreferences.getInstance().timeout(const Duration(seconds: 8));
+    final s = AppState._(prefs, Settings(prefs), await Identity.load(prefs));
     final saved = prefs.getString('laptop');
     if (saved != null) {
       try {
         s.laptop = Laptop.decode(saved);
       } catch (_) {}
     }
-    s.discovery.start();
+    // discovery runs in the background: never let it delay or break startup
+    unawaited(s.discovery.start().catchError((Object e) => debugPrint('discovery: $e')));
     if (s.laptop != null) s._connect();
     return s;
   }

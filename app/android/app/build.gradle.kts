@@ -32,6 +32,10 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // No code shrinking: R8 can strip plugin classes that are only reached by reflection,
+            // which breaks the app at startup.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

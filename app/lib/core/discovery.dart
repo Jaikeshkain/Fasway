@@ -29,16 +29,14 @@ class Discovery extends ChangeNotifier {
       _sub = d.eventStream?.listen((event) {
         switch (event) {
           case BonsoirDiscoveryServiceFoundEvent():
-            event.service?.resolve(d.serviceResolver); // ask for its address + TXT record
+            event.service.resolve(d.serviceResolver); // ask for its address + TXT record
           case BonsoirDiscoveryServiceResolvedEvent() || BonsoirDiscoveryServiceUpdatedEvent():
             final s = event.service;
             if (s != null) _add(s);
           case BonsoirDiscoveryServiceLostEvent():
             final s = event.service;
-            if (s != null) {
-              found.removeWhere((_, f) => s.name.endsWith(f.name));
-              notifyListeners();
-            }
+            found.removeWhere((_, f) => s.name.endsWith(f.name));
+            notifyListeners();
           default:
         }
       });
