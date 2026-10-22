@@ -15,16 +15,20 @@ Native Flutter app for Fasway: the same features as the web app, plus what a bro
 
 Toolchain (installed under `E:\dev`): Flutter SDK, Android SDK (platform 36, build tools, NDK 28.2), JDK 21.
 
-```bash
+Every release goes through the build script. It raises the version (one version for the phone app and the
+laptop app, in `pubspec.yaml` and `fasway/version.py`) and names the APKs after Fasway:
+
+```powershell
 cd app
-flutter pub get
-flutter build apk --release --split-per-abi
+.\tool\build_apk.ps1           # fixes / small changes: 1.1.0 -> 1.1.1
+.\tool\build_apk.ps1 -Minor    # new features:          1.1.1 -> 1.2.0
 ```
 
-The APKs are written to `build/app/outputs/flutter-apk/`. Most phones need `app-arm64-v8a-release.apk`.
+The APKs land in `app/dist/`: `Fasway-v1.2.0-arm64.apk` is the one almost every phone needs (`-arm32` for old
+phones, `-x86_64` for emulators). The version is shown in the app's Settings and in the laptop window.
 
 ## Install on the phone
-- **USB / wireless debugging:** `flutter install`, or `adb install -r app-arm64-v8a-release.apk`.
+- **USB / wireless debugging:** `adb install -r dist\Fasway-v1.2.0-arm64.apk`.
 - **Without a cable:** copy the APK to the phone (Drive, WhatsApp, USB) and open it. Android will ask you to allow installs from that app once.
 
 ## Tests

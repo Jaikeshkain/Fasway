@@ -4,6 +4,10 @@ import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+/// Set by tool/build_apk.ps1 (--dart-define), shown in Settings.
+const appVersion = String.fromEnvironment('FASWAY_VERSION', defaultValue: 'dev');
+const appBuild = String.fromEnvironment('FASWAY_BUILD', defaultValue: '0');
+
 /// Colours shared with the web app.
 class C {
   static const bg = Color(0xFF111318);

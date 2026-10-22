@@ -44,8 +44,25 @@ class PreviewController extends ChangeNotifier {
   int get videoH => renderer.videoHeight;
   bool get hasVideo => videoW > 0 && videoH > 0;
 
-  void setActive(bool want) {
+  Timer? _linger;
+
+  /// [linger]: keep the stream running this long after it stops being wanted, so a quick visit to
+  /// another tab doesn't tear it down and rebuild it (instant picture when you come back).
+  void setActive(bool want, {Duration linger = Duration.zero}) {
     want = want || fullscreenUsers > 0;
+    if (want) {
+      _linger?.cancel();
+      _linger = null;
+    } else if (_active && linger > Duration.zero) {
+      _linger ??= Timer(linger, () {
+        _linger = null;
+        setActive(false);
+      });
+      return;
+    } else {
+      _linger?.cancel();
+      _linger = null;
+    }
     if (want == _active) return;
     _active = want;
     want ? _start() : _stop(notifyLaptop: true);
@@ -89,6 +106,7 @@ class PreviewController extends ChangeNotifier {
         if (_pc != pc) return;
         if (e.track.kind == 'video' && e.streams.isNotEmpty) {
           renderer.srcObject = e.streams.first;
+          notifyListeners(); // the view must rebuild to switch from placeholder to the video texture
         } else if (e.track.kind == 'audio') {
           _audioTrack = e.track;
           e.track.enabled = audioOn;
@@ -210,6 +228,7 @@ class PreviewController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _linger?.cancel();
     _sub.cancel();
     settings.removeListener(_onSettings);
     _stop(notifyLaptop: true);
@@ -759,7 +778,14 @@ class _PreviewSurfaceState extends State<PreviewSurface> {
                 transform: Matrix4.identity()
                   ..translateByDouble(_tx, _ty, 0, 1)
                   ..scaleByDouble(_s, _s, 1, 1),
-                child: RTCVideoView(c.renderer, key: ObjectKey(c.renderer), objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain),
+                // RTCVideoView decides "video or placeholder" only when it is rebuilt itself, not when
+                // the renderer gets its stream: rebuild it on every renderer change, or the picture
+                // could stay black after the stream restarts (e.g. coming back from another tab)
+                child: ValueListenableBuilder<RTCVideoValue>(
+                  valueListenable: c.renderer,
+                  builder: (_, _, _) => RTCVideoView(c.renderer,
+                      key: ObjectKey(c.renderer), objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain),
+                ),
               ),
             ),
             if (ring != null && ring.dx >= 0 && ring.dy >= 0 && ring.dx <= size.width && ring.dy <= size.height)

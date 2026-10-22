@@ -106,6 +106,7 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
               ]),
               const SizedBox(height: 8),
               Text('This phone: ${s.identity.name}', style: const TextStyle(color: C.muted, fontSize: 12)),
+              const Text('Fasway v$appVersion (build $appBuild)', style: TextStyle(color: C.muted, fontSize: 12)),
             ]),
           ),
         );

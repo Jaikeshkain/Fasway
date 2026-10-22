@@ -21,11 +21,13 @@ from PIL import ImageTk
 
 from . import autostart
 from .certs import cert_fingerprint, ensure_cert
+from . import shellmenu, ui
+from .version import __version__
 from .discovery import Announcer, new_device_id
 from .files import open_folder
 from .platform_input import permission_problem
 from .server import FaswayServer
-from .tray import Tray
+from .tray import Tray, _icon_image
 
 
 def _data_dir() -> Path:
@@ -41,8 +43,6 @@ CONFIG = DATA / "config.json"
 DEFAULT_PORT = 8443
 # localhost only: keeps Fasway single-instance and lets a 2nd launch open the window (env override for tests)
 CONTROL_PORT = int(os.environ.get("FASWAY_CONTROL_PORT", "47391"))
-FONT = "Helvetica Neue" if sys.platform == "darwin" else "Segoe UI"
-FG, MUTED = "#111111", "#555555"  # explicit colours: macOS dark mode would otherwise draw white-on-white
 
 log = logging.getLogger("fasway")
 
@@ -113,13 +113,15 @@ def is_admin() -> bool | None:
     return is_elevated()
 
 
-def relaunch_as_admin(background: bool = False) -> bool:
+def relaunch_as_admin(background: bool = False, send: list[str] | None = None) -> bool:
     """Start an elevated copy of Fasway (Windows shows the UAC prompt). False if the user declined."""
     import ctypes
     prog, args, workdir = autostart.launch_command()   # pythonw / packaged exe: no console window
     args = [a for a in args if a != "--background"] + ["--no-elevate", "--takeover"]
     if background:
         args.append("--background")
+    if send:   # files from Explorer's "Send to phone" that started us
+        args += ["--send", *send]
     params = " ".join(f'"{a}"' if " " in a else a for a in args)
     return ctypes.windll.shell32.ShellExecuteW(None, "runas", prog, params, workdir, 1) > 32
 
@@ -145,16 +147,24 @@ def acquire_instance(takeover: bool) -> socket.socket | None:
             time.sleep(0.3)
 
 
-def signal_running_instance():
+def signal_running_instance(msg: bytes = b"show\n") -> bool:
     try:
         with socket.create_connection(("127.0.0.1", CONTROL_PORT), timeout=2) as c:
-            c.sendall(b"show\n")
+            c.sendall(msg)
+        return True
     except OSError:
-        pass
+        return False
+
+
+def send_args() -> list[str]:
+    """Paths after --send (Explorer's "Send to phone (Fasway)")."""
+    if "--send" not in sys.argv:
+        return []
+    return [a for a in sys.argv[sys.argv.index("--send") + 1:] if not a.startswith("--")]
 
 
 class App:
-    def __init__(self, background: bool, lock: socket.socket):
+    def __init__(self, background: bool, lock: socket.socket, pending_send: list | None = None):
         self.cfg = load_config()
         self.ips = lan_ips()
         self.events: queue.Queue = queue.Queue()
@@ -178,6 +188,14 @@ class App:
         threading.Thread(target=self._run_server, name="server", daemon=True).start()
         threading.Thread(target=self._control_loop, args=(lock,), name="control", daemon=True).start()
 
+        self._pending_send: list = []      # files to send once a phone connects
+        self._menu_batch: list = []        # paths from Explorer's "Send to phone", gathered for 0.5 s
+        self._menu_flush = None
+        if pending_send:
+            self.events.put(("send_menu", pending_send))
+        if sys.platform == "win32" and self.cfg.get("send_menu", True):
+            shellmenu.install(DATA)       # keeps the right-click entry pointing at this copy of Fasway
+
         self.tray = Tray(self.events.put, self._tray_state)
         has_tray = self.tray.start()
         self._build_ui()
@@ -198,16 +216,29 @@ class App:
             self.events.put(("status", f"error: {e}"))
 
     def _control_loop(self, lock: socket.socket):
-        """A second launch of Fasway connects here and asks us to show the window."""
+        """A second launch of Fasway connects here: "show" (open the window) or "send" + paths (Explorer's
+        "Send to phone" on files)."""
         while True:
             try:
                 conn, _ = lock.accept()
-                with conn:
-                    conn.settimeout(2)
-                    if conn.recv(16).startswith(b"show"):
-                        self.events.put(("show", None))
             except OSError:
                 return
+            try:
+                with conn:
+                    conn.settimeout(2)
+                    data = b""
+                    while len(data) < 1 << 20:
+                        chunk = conn.recv(65536)
+                        if not chunk:
+                            break
+                        data += chunk
+            except OSError:
+                continue
+            if data.startswith(b"show"):
+                self.events.put(("show", None))
+            elif data.startswith(b"send\n"):
+                paths = [p for p in data[5:].decode("utf-8", "replace").split("\n") if p.strip()]
+                self.events.put(("send_menu", paths))
 
     def _announce(self):
         """Announce the main address plus any address a phone has reached us on (unreachable ones would
@@ -235,93 +266,167 @@ class App:
         self.root = root = tk.Tk()
         root.title("Fasway")
         root.resizable(False, False)
-        root.configure(bg="white")
-        pad = {"padx": 16, "pady": 6}
+        root.configure(bg=ui.BG)
+        ui.style_ttk(root)
+        ui.dark_title_bar(root)
+        k = self.k = ui.scale(root)
+        px = lambda v: int(v * k)  # noqa: E731
+        try:
+            self._logo = ImageTk.PhotoImage(_icon_image(False).resize((px(40), px(40))))
+            root.iconphoto(True, ImageTk.PhotoImage(_icon_image(False)))
+        except Exception:
+            self._logo = None
 
-        tk.Label(root, text="Fasway", font=(FONT, 18, "bold"), fg=FG, bg="white").pack(pady=(14, 0))
-        tk.Label(root, text="Scan with your phone camera (same Wi-Fi)",
-                 font=(FONT, 10), fg=MUTED, bg="white").pack()
+        # ---- header: logo, name, live status ----
+        head = tk.Frame(root, bg=ui.BG)
+        head.pack(fill="x", padx=px(22), pady=(px(18), px(12)))
+        if self._logo:
+            tk.Label(head, image=self._logo, bg=ui.BG).pack(side="left")
+        titles = tk.Frame(head, bg=ui.BG)
+        titles.pack(side="left", padx=px(12))
+        tk.Label(titles, text="Fasway", font=(ui.FONT, 18, "bold"), fg=ui.TEXT, bg=ui.BG, anchor="w").pack(fill="x")
+        tk.Label(titles, text="Control this laptop from your phone", font=(ui.FONT, 9), fg=ui.MUTED, bg=ui.BG,
+                 anchor="w").pack(fill="x")
+        pill = tk.Frame(head, bg=ui.PANEL2, padx=px(12), pady=px(6))
+        pill.pack(side="right")
+        self.status_dot = ui.Dot(pill, ui.PANEL2)
+        self.status_dot.pack(side="left")
+        self.status_var = tk.StringVar(value="Starting…")
+        tk.Label(pill, textvariable=self.status_var, font=(ui.FONT, 10, "bold"), fg=ui.TEXT,
+                 bg=ui.PANEL2).pack(side="left", padx=(px(6), 0))
+        self.status_dot.set(ui.WARN, True)
 
         problem = permission_problem()
         if problem:
-            tk.Label(root, text=problem, font=(FONT, 10, "bold"), fg="#c0392b", bg="white",
-                     wraplength=360, justify="center").pack(padx=16, pady=(8, 0))
+            tk.Label(root, text="⚠  " + problem, font=(ui.FONT, 9, "bold"), fg="#1a1300", bg=ui.WARN,
+                     wraplength=px(700), justify="left", anchor="w", padx=px(12), pady=px(8)).pack(
+                fill="x", padx=px(22), pady=(0, px(12)))
 
-        self.qr_label = tk.Label(root, bg="white")
-        self.qr_label.pack(**pad)
+        body = tk.Frame(root, bg=ui.BG)
+        body.pack(fill="both", padx=px(22), pady=(0, px(10)))
+        left = tk.Frame(body, bg=ui.BG)
+        left.pack(side="left", fill="y", anchor="n")
+        right = tk.Frame(body, bg=ui.BG)
+        right.pack(side="left", fill="both", expand=True, padx=(px(14), 0), anchor="n")
 
-        row = tk.Frame(root, bg="white")
-        row.pack(**pad)
-        tk.Label(row, text="Address:", bg="white", fg=FG, font=(FONT, 10)).pack(side="left")
+        # ---- left: pairing ----
+        pair = ui.Card(left, "Pair a phone")
+        pair.pack(fill="x")
+        qr_tile = tk.Frame(pair, bg="white", padx=px(8), pady=px(8))
+        qr_tile.pack()
+        self.qr_label = tk.Label(qr_tile, bg="white")
+        self.qr_label.pack()
+        tk.Label(pair, text="Scan with the Fasway app or the phone camera", font=(ui.FONT, 9), fg=ui.MUTED,
+                 bg=ui.PANEL).pack(pady=(px(10), px(8)))
         self.addr_var = tk.StringVar(value=self._address_choices()[0])
-        self.addr_combo = ttk.Combobox(row, textvariable=self.addr_var, values=self._address_choices(),
-                                       state="readonly", width=30)
-        self.addr_combo.pack(side="left", padx=6)
+        self.addr_combo = ttk.Combobox(pair, textvariable=self.addr_var, values=self._address_choices(),
+                                       state="readonly", width=34, font=(ui.FONT, 10))
+        self.addr_combo.pack(fill="x")
         self.addr_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_qr())
-
         self.url_var = tk.StringVar()
-        tk.Entry(root, textvariable=self.url_var, state="readonly", width=56, fg=FG,
-                 font=("Menlo" if sys.platform == "darwin" else "Consolas", 9), relief="flat",
-                 readonlybackground="#f3f3f3").pack(**pad)
+        tk.Entry(pair, textvariable=self.url_var, state="readonly", font=(ui.MONO, 8), relief="flat",
+                 readonlybackground=ui.PANEL2, fg=ui.MUTED, bd=px(6)).pack(fill="x", pady=(px(6), 0))
         self.hint_var = tk.StringVar()
-        tk.Label(root, textvariable=self.hint_var, font=(FONT, 9), fg=MUTED, bg="white",
-                 wraplength=380, justify="center").pack(padx=16)
+        tk.Label(pair, textvariable=self.hint_var, font=(ui.FONT, 8), fg=ui.MUTED, bg=ui.PANEL,
+                 wraplength=px(300), justify="center").pack(pady=(px(6), px(8)))
+        btns = tk.Frame(pair, bg=ui.PANEL)
+        btns.pack()
+        self._copy_btn = ui.Button(btns, "Copy link", self.copy_link)
+        self._copy_btn.pack(side="left", padx=px(4))
+        ui.Button(btns, "New pairing code", self.new_token).pack(side="left", padx=px(4))
 
-        btns = tk.Frame(root, bg="white")
-        btns.pack(**pad)
-        ttk.Button(btns, text="Copy link", command=self.copy_link).pack(side="left", padx=4)
-        ttk.Button(btns, text="New pairing code", command=self.new_token).pack(side="left", padx=4)
-
-        opts = tk.Frame(root, bg="white")
-        opts.pack(padx=16, pady=(4, 0))
-        cb = dict(bg="white", fg=FG, activebackground="white", font=(FONT, 9), anchor="w")
-        self.autostart_var = tk.BooleanVar(value=self.autostart_on)
-        tk.Checkbutton(opts, text="Start with Windows (runs in the tray)" if sys.platform == "win32"
-                       else "Start at login (menu bar)", variable=self.autostart_var,
-                       command=lambda: self.events.put(("toggle_autostart", None)), **cb).pack(fill="x")
-
-        # Windows blocks input to apps running as Administrator (Task Manager...) unless we are admin too
-        if self.admin is not None:
-            self.always_admin = tk.BooleanVar(value=bool(self.cfg.get("always_admin")))
-            tk.Checkbutton(opts, text="Always run as administrator", variable=self.always_admin,
-                           command=lambda: self.events.put(("toggle_admin", None)), **cb).pack(fill="x")
-            if self.admin:
-                tk.Label(opts, text="🛡 Running as administrator – admin apps can be controlled too",
-                         font=(FONT, 9), fg="#0a7", bg="white").pack(pady=(2, 0))
-            else:
-                tk.Label(opts, text="Not running as administrator: apps like Task Manager can't be "
-                                    "controlled from the phone.", font=(FONT, 9), fg="#a65e00", bg="white",
-                         wraplength=360, justify="center").pack(pady=(2, 0))
-                ttk.Button(opts, text="Restart as administrator", command=self.restart_as_admin).pack(pady=(4, 0))
-
-        self.status_var = tk.StringVar(value="Starting…")
-        tk.Label(root, textvariable=self.status_var, bg="white", font=(FONT, 10, "bold"),
-                 fg="#0a7").pack(pady=(6, 4))
-
-        # file sharing: drop files anywhere on this window (Windows) or pick them
-        drop = tk.Frame(root, bg="#f3f6ff", highlightbackground="#9db8ff", highlightthickness=1)
-        drop.pack(fill="x", padx=20, pady=(4, 2))
-        tk.Label(drop, text="📁 Drop files on this window to send them to your phone" if sys.platform == "win32"
-                 else "📁 Send files to your phone", font=(FONT, 9, "bold"), fg=FG, bg="#f3f6ff").pack(pady=(6, 2))
-        fb = tk.Frame(drop, bg="#f3f6ff")
-        fb.pack(pady=(0, 4))
-        ttk.Button(fb, text="Send files to phone…", command=self.pick_files).pack(side="left", padx=4)
-        ttk.Button(fb, text="Open received files", command=lambda: open_folder(self.server.files.inbox)).pack(side="left", padx=4)
+        # ---- right: files ----
+        files = ui.Card(right, "Send files to your phone")
+        files.pack(fill="x")
+        self.drop_canvas = tk.Canvas(files, height=px(96), bg=ui.PANEL, highlightthickness=0)
+        self.drop_canvas.pack(fill="x")
+        self.drop_canvas.bind("<Configure>", lambda e: self._draw_drop())
+        self._drop_flash = 0.0
+        fb = tk.Frame(files, bg=ui.PANEL)
+        fb.pack(fill="x", pady=(px(10), 0))
+        ui.Button(fb, "Choose files…", self.pick_files, kind="primary").pack(side="left")
+        ui.Button(fb, "Received files", lambda: open_folder(self.server.files.inbox)).pack(side="left", padx=px(8))
         self.files_var = tk.StringVar(value=f"Files from the phone are saved in {self.server.files.inbox}")
-        tk.Label(drop, textvariable=self.files_var, font=(FONT, 8), fg=MUTED, bg="#f3f6ff",
-                 wraplength=360, justify="center").pack(padx=8, pady=(0, 6))
+        tk.Label(files, textvariable=self.files_var, font=(ui.FONT, 8), fg=ui.MUTED, bg=ui.PANEL, anchor="w",
+                 justify="left", wraplength=px(330)).pack(fill="x", pady=(px(8), 0))
         self._drop_ready = False
         root.after(300, self._enable_drop)
 
-        # trusted phones: only these can connect without asking; Remove disconnects one immediately
-        self.phones_frame = tk.Frame(root, bg="white")
-        self.phones_frame.pack(fill="x", padx=20, pady=(2, 14))
+        # ---- right: phones ----
+        phones = ui.Card(right, "Phones")
+        phones.pack(fill="x", pady=(px(12), 0))
+        self.phones_frame = tk.Frame(phones, bg=ui.PANEL)
+        self.phones_frame.pack(fill="x")
         self._render_phones()
+
+        # ---- right: settings ----
+        sets = ui.Card(right, "Settings")
+        sets.pack(fill="x", pady=(px(12), 0))
+        self.autostart_toggle = ui.setting_row(
+            sets, "Start with Windows" if sys.platform == "win32" else "Start at login",
+            "Runs quietly in the tray" if sys.platform == "win32" else "Runs in the menu bar",
+            self.autostart_on, lambda: self.events.put(("toggle_autostart", None)))
+        if sys.platform == "win32":
+            self.menu_toggle = ui.setting_row(
+                sets, "“Send to phone” in Explorer", "Right-click any file (Windows 11: Show more options)",
+                shellmenu.is_installed(), self._toggle_send_menu)
+        # Windows blocks input to apps running as Administrator (Task Manager...) unless we are admin too
+        if self.admin is not None:
+            self.admin_toggle = ui.setting_row(
+                sets, "Always run as administrator", "Needed to control apps like Task Manager",
+                bool(self.cfg.get("always_admin")), lambda: self.events.put(("toggle_admin", None)))
+            if self.admin:
+                tk.Label(sets, text="🛡  Running as administrator", font=(ui.FONT, 9), fg=ui.OK, bg=ui.PANEL,
+                         anchor="w").pack(fill="x", pady=(px(6), 0))
+            else:
+                row = tk.Frame(sets, bg=ui.PANEL)
+                row.pack(fill="x", pady=(px(6), 0))
+                tk.Label(row, text="Not running as administrator", font=(ui.FONT, 9), fg=ui.WARN,
+                         bg=ui.PANEL).pack(side="left")
+                ui.Button(row, "Restart as admin", self.restart_as_admin, small=True).pack(side="right")
+
+        tk.Label(root, text=f"Fasway v{__version__}  ·  Closing this window keeps Fasway running in the tray.", font=(ui.FONT, 8),
+                 fg=ui.MUTED, bg=ui.BG).pack(pady=(0, px(14)))
 
         self.refresh_qr()
         root.after(100, self._poll)
         root.after(10_000, self._watch_network)
         root.protocol("WM_DELETE_WINDOW", self.hide)
+
+    def _set_status(self, text: str, color: str, pulsing: bool = False):
+        self.status_var.set(text)
+        self.status_dot.set(color, pulsing)
+
+    def _draw_drop(self):
+        """Dashed drop zone; flashes blue when files are dropped."""
+        c, k = self.drop_canvas, self.k
+        w, h = c.winfo_width(), c.winfo_height()
+        f = self._drop_flash
+        c.delete("all")
+        m = int(2 * k)
+        fill = ui._mix(ui.PANEL, ui.ACCENT, 0.06 + 0.25 * f)
+        c.create_rectangle(m, m, w - m - 1, h - m - 1, outline=ui._mix(ui.BORDER, ui.ACCENT, 0.5 + 0.5 * f),
+                           dash=(6, 4), width=max(1, int(1.5 * k)), fill=fill)
+        drop = sys.platform == "win32"
+        c.create_text(w / 2, h / 2 - 10 * k, text="⇩  Drop files or folders here" if drop else "Send files",
+                      fill=ui.TEXT, font=(ui.FONT, 11, "bold"))
+        c.create_text(w / 2, h / 2 + 13 * k, text="anywhere on this window · they land in the phone's Downloads/Fasway",
+                      fill=ui.MUTED, font=(ui.FONT, 8))
+
+    def _flash_drop(self, v: float = 1.0):
+        self._drop_flash = v
+        self._draw_drop()
+        if v > 0:
+            self.root.after(30, lambda: self._flash_drop(max(0.0, v - 0.08)))
+
+    def _toggle_send_menu(self):
+        on = not shellmenu.is_installed()
+        ok = shellmenu.install(DATA) if on else shellmenu.uninstall()
+        self.cfg["send_menu"] = on
+        save_config(self.cfg)
+        self.menu_toggle.set(shellmenu.is_installed())
+        if on and ok:
+            self.files_var.set("Right-click a file in Explorer → “Send to phone (Fasway)”.")
 
     # ---------- files ----------
     def _enable_drop(self):
@@ -345,12 +450,28 @@ class App:
                 files.append(p)
         if not files:
             return
-        if not self.phones:
-            self.files_var.set("No phone connected: open Fasway on the phone, then send the files again.")
+        if not self.phones:   # sent as soon as a phone connects (within a few minutes)
+            self._pending_send = files
+            self.root.after(180_000, lambda f=files: self._pending_send is f and self._drop_pending())
+            what = files[0].name if len(files) == 1 else f"{len(files)} files"
+            self.files_var.set(f"Waiting for your phone: {what} will be sent when Fasway opens on it.")
+            self.tray.notify(f"Open Fasway on your phone to receive {what}.")
             return
         n = self.server.offer_files(files)
         what = files[0].name if n == 1 else f"{n} files"
         self.files_var.set(f"📤 Sending {what} to your phone (saved in its Downloads/Fasway)")
+
+    def _drop_pending(self):
+        self._pending_send = []
+        self.files_var.set("No phone connected: the files were not sent.")
+
+    def _send_menu_batch(self):
+        self._menu_flush = None
+        batch, self._menu_batch = self._menu_batch, []
+        self.send_files(batch)
+        if self.phones:
+            what = Path(batch[0]).name if len(batch) == 1 else f"{len(batch)} items"
+            self.tray.notify(f"📤 Sending {what} to your phone")
 
     def _file_received(self, path: Path, phone: str):
         self.files_var.set(f"📥 Received {path.name} from {phone}")
@@ -396,17 +517,22 @@ class App:
             w.destroy()
         devices = self.server.devices.listing()
         online = {d for d, socks in self.server._dev_sockets.items() if socks}
-        tk.Label(f, text=f"Trusted phones ({len(devices)})" if devices else
-                 "No trusted phones yet – a new phone must be approved here",
-                 font=(FONT, 9, "bold"), fg=MUTED, bg="white", anchor="w").pack(fill="x")
+        if not devices:
+            tk.Label(f, text="No phones yet. Scan the QR code with your phone; you approve it here once.",
+                     font=(ui.FONT, 9), fg=ui.MUTED, bg=ui.PANEL, anchor="w", justify="left",
+                     wraplength=int(330 * self.k)).pack(fill="x")
         for d in devices:
-            row = tk.Frame(f, bg="#f5f6f8")
-            row.pack(fill="x", pady=2)
-            state = "● connected" if d["id"] in online else f"last seen {self._ago(d.get('last_seen', 0))}"
-            tk.Label(row, text=f"📱 {d['name']}", font=(FONT, 9), fg=FG, bg="#f5f6f8", anchor="w").pack(side="left", padx=6, pady=3)
-            tk.Label(row, text=state, font=(FONT, 8), fg="#0a7" if d["id"] in online else MUTED,
-                     bg="#f5f6f8").pack(side="left")
-            ttk.Button(row, text="Remove", width=8, command=lambda d=d: self._remove_phone(d)).pack(side="right", padx=4, pady=2)
+            on = d["id"] in online
+            row = tk.Frame(f, bg=ui.PANEL2, padx=int(10 * self.k), pady=int(7 * self.k))
+            row.pack(fill="x", pady=int(3 * self.k))
+            tk.Label(row, text="📱", font=(ui.FONT, 14), fg=ui.TEXT, bg=ui.PANEL2).pack(side="left")
+            text = tk.Frame(row, bg=ui.PANEL2)
+            text.pack(side="left", padx=int(8 * self.k), fill="x", expand=True)
+            tk.Label(text, text=d["name"], font=(ui.FONT, 10, "bold"), fg=ui.TEXT, bg=ui.PANEL2,
+                     anchor="w").pack(fill="x")
+            tk.Label(text, text="● Connected" if on else f"Last seen {self._ago(d.get('last_seen', 0))}",
+                     font=(ui.FONT, 8), fg=ui.OK if on else ui.MUTED, bg=ui.PANEL2, anchor="w").pack(fill="x")
+            ui.Button(row, "Remove", lambda d=d: self._remove_phone(d), kind="danger", small=True).pack(side="right")
 
     def _remove_phone(self, d: dict):
         from tkinter import messagebox
@@ -420,8 +546,9 @@ class App:
         """'Allow this phone?' - shown even when the main window is hidden in the tray."""
         win = tk.Toplevel(self.root)
         win.title("Fasway – new phone")
-        win.configure(bg="white")
+        win.configure(bg=ui.PANEL, padx=int(8 * self.k))
         win.resizable(False, False)
+        ui.dark_title_bar(win)
         win.attributes("-topmost", True)
         done = {"v": False}
 
@@ -431,16 +558,22 @@ class App:
                 answer(ok)
                 win.destroy()
 
-        tk.Label(win, text="📱 A phone wants to connect", font=(FONT, 13, "bold"), fg=FG, bg="white").pack(padx=24, pady=(18, 6))
-        tk.Label(win, text=name, font=(FONT, 11), fg=FG, bg="white").pack()
-        tk.Label(win, text=f"from {ip}", font=(FONT, 9), fg=MUTED, bg="white").pack()
+        k = self.k
+        tk.Label(win, text="📱", font=(ui.FONT, 30), fg=ui.TEXT, bg=ui.PANEL).pack(pady=(int(18 * k), 0))
+        tk.Label(win, text="A phone wants to connect", font=(ui.FONT, 14, "bold"), fg=ui.TEXT,
+                 bg=ui.PANEL).pack(padx=int(24 * k), pady=(int(4 * k), int(6 * k)))
+        tk.Label(win, text=name, font=(ui.FONT, 11, "bold"), fg=ui.ACCENT, bg=ui.PANEL).pack()
+        tk.Label(win, text=f"from {ip}", font=(ui.FONT, 9), fg=ui.MUTED, bg=ui.PANEL).pack()
         tk.Label(win, text="Only allow phones you own: it will be able to control this laptop.",
-                 font=(FONT, 9), fg="#a65e00", bg="white", wraplength=300, justify="center").pack(padx=24, pady=(10, 6))
-        b = tk.Frame(win, bg="white")
-        b.pack(pady=(4, 18))
-        ttk.Button(b, text="Deny", command=lambda: reply(False)).pack(side="left", padx=6)
-        allow = ttk.Button(b, text="Allow", command=lambda: reply(True))
-        allow.pack(side="left", padx=6)
+                 font=(ui.FONT, 9), fg=ui.WARN, bg=ui.PANEL, wraplength=int(300 * k),
+                 justify="center").pack(padx=int(24 * k), pady=(int(12 * k), int(8 * k)))
+        b = tk.Frame(win, bg=ui.PANEL)
+        b.pack(pady=(int(4 * k), int(20 * k)))
+        ui.Button(b, "Deny", lambda: reply(False)).pack(side="left", padx=int(6 * k))
+        allow = ui.Button(b, "Allow", lambda: reply(True), kind="primary")
+        allow.pack(side="left", padx=int(6 * k))
+        win.bind("<Return>", lambda e: reply(True))
+        win.bind("<Escape>", lambda e: reply(False))
         win.protocol("WM_DELETE_WINDOW", lambda: reply(False))
         win.after(115_000, lambda: reply(False))   # phone gives up after 2 minutes anyway
         win.update_idletasks()
@@ -476,7 +609,11 @@ class App:
                 kind, val = self.events.get_nowait()
                 if kind == "clients":
                     self.phones = val
-                    self.status_var.set(f"● {val} phone connected" if val else "Waiting for phone…")
+                    self._set_status(f"{val} phone{'s' if val != 1 else ''} connected" if val else "Waiting for phone",
+                                     ui.OK if val else ui.WARN, pulsing=not val)
+                    if val and self._pending_send:   # files picked in Explorer before a phone was connected
+                        files, self._pending_send = self._pending_send, []
+                        self.send_files(files)
                     self.tray.set_connected(val)
                     self._render_phones()
                 elif kind == "devices":
@@ -484,7 +621,10 @@ class App:
                 elif kind == "pair":
                     self._ask_pair(*val)
                 elif kind == "status":
-                    self.status_var.set("Waiting for phone…" if val == "running" else val)
+                    if val == "running":
+                        self._set_status("Waiting for phone", ui.WARN, pulsing=True)
+                    else:
+                        self._set_status(val, ui.BAD)
                 elif kind == "local_ip":
                     if val not in self.reached_ips:
                         self.reached_ips.add(val)
@@ -497,12 +637,17 @@ class App:
                     self._set_autostart(not self.autostart_on)
                 elif kind == "autostart_done":
                     self.autostart_on = val
-                    self.autostart_var.set(val)
+                    self.autostart_toggle.set(val)
                     self.tray.refresh()
                 elif kind == "toggle_admin":
                     self._toggle_admin()
                 elif kind == "send_files":
+                    self._flash_drop()
                     self.send_files(val)
+                elif kind == "send_menu":   # Explorer: one event per selected item; send them as one batch
+                    self._menu_batch += val
+                    if not self._menu_flush:
+                        self._menu_flush = self.root.after(500, self._send_menu_batch)
                 elif kind == "file_received":
                     self._file_received(*val)
         except queue.Empty:
@@ -537,8 +682,8 @@ class App:
         on = not self.cfg.get("always_admin")
         self.cfg["always_admin"] = on
         save_config(self.cfg)
-        if hasattr(self, "always_admin"):
-            self.always_admin.set(on)
+        if hasattr(self, "admin_toggle"):
+            self.admin_toggle.set(on)
         self.tray.refresh()
         if self.autostart_on:          # the sign-in task must start Fasway with the same rights
             self._set_autostart(True)
@@ -550,7 +695,7 @@ class App:
             # the elevated copy takes over (same port, same link); the phone reconnects by itself
             self._shutdown()
         else:
-            self.status_var.set("Administrator restart was cancelled")
+            self._set_status("Admin restart cancelled", ui.WARN)
 
     def _shutdown(self):
         self.tray.stop()
@@ -570,24 +715,27 @@ class App:
 
 
 def main():
-    background = "--background" in sys.argv
+    send = send_args()
+    background = "--background" in sys.argv or bool(send)
     setup_logging()
     lock = acquire_instance(takeover="--takeover" in sys.argv)
     if lock is None:                       # Fasway is already running
-        if not background:
+        if send:
+            signal_running_instance(b"send\n" + "\n".join(send).encode("utf-8"))   # it sends them
+        elif not background:
             signal_running_instance()      # ... so just bring up its window
         return
     cfg = load_config()
     if is_admin() is False and "--no-elevate" not in sys.argv and cfg.get("always_admin"):
         lock.close()
-        if relaunch_as_admin(background):
+        if relaunch_as_admin(background, send):
             return   # the elevated copy runs Fasway; if the UAC prompt is declined we carry on normally
         lock = acquire_instance(takeover=True)
         if lock is None:
             return
-    log.info("Fasway starting (%s%s)", "background" if background else "window",
+    log.info("Fasway %s starting (%s%s)", __version__, "background" if background else "window",
              ", administrator" if is_admin() else "")
-    App(background, lock).run()
+    App(background, lock, pending_send=send).run()
 
 
 if __name__ == "__main__":

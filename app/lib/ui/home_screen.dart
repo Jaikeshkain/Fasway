@@ -90,8 +90,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (conn.state == LinkState.connected && _lastState != null) Fx.success(); // back online
       _lastState = conn.state;
     }
-    final want = s.settings.screenOn && _resumed && conn.isConnected && (_tab == 0 || _tab == 1);
-    _preview.setActive(want);
+    final allowed = s.settings.screenOn && _resumed && conn.isConnected;
+    // on another tab the stream keeps running for a while: coming back shows the picture at once
+    _preview.setActive(allowed && (_tab == 0 || _tab == 1),
+        linger: allowed ? const Duration(seconds: 20) : Duration.zero);
     setState(() {});
   }
 
