@@ -21,7 +21,7 @@ class PreviewController extends ChangeNotifier {
 
   final Connection conn;
   final Settings settings;
-  final RTCVideoRenderer renderer = RTCVideoRenderer();
+  RTCVideoRenderer renderer = RTCVideoRenderer();
   bool _rendererReady = false;
   RTCPeerConnection? _pc;
   MediaStreamTrack? _audioTrack;
@@ -164,9 +164,24 @@ class PreviewController extends ChangeNotifier {
     _pc = null;
     _audioTrack = null;
     pc?.close();
-    if (_rendererReady) renderer.srcObject = null;
+    if (_rendererReady) _retireRenderer();
     cursor = null;
     if (!_disposed) notifyListeners();
+  }
+
+  /// A renderer forgets the video size when its stream is replaced and isn't told it again when the
+  /// new stream has the same size, so after switching tabs the picture came back squashed. Every
+  /// stream gets a fresh renderer instead.
+  void _retireRenderer() {
+    final old = renderer;
+    old.onResize = null;
+    renderer = RTCVideoRenderer();
+    _rendererReady = false;
+    // the old view can still be on screen this frame: release it a moment later
+    Timer(const Duration(seconds: 1), () {
+      old.srcObject = null;
+      old.dispose();
+    });
   }
 
   @override
@@ -714,7 +729,7 @@ class _PreviewSurfaceState extends State<PreviewSurface> {
                 transform: Matrix4.identity()
                   ..translateByDouble(_tx, _ty, 0, 1)
                   ..scaleByDouble(_s, _s, 1, 1),
-                child: RTCVideoView(c.renderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain),
+                child: RTCVideoView(c.renderer, key: ObjectKey(c.renderer), objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain),
               ),
             ),
             if (ring != null && ring.dx >= 0 && ring.dy >= 0 && ring.dx <= size.width && ring.dy <= size.height)

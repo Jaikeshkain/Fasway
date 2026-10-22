@@ -18,7 +18,7 @@ class ControlsTab extends StatefulWidget {
   State<ControlsTab> createState() => _ControlsTabState();
 }
 
-class _ControlsTabState extends State<ControlsTab> {
+class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
   late final StreamSubscription _sub;
   Timer? _poll, _tick;
   Map<String, dynamic>? _sys, _status;
@@ -33,12 +33,16 @@ class _ControlsTabState extends State<ControlsTab> {
   DateTime _lastVolSend = DateTime(0), _lastBrightSend = DateTime(0);
   // clipboard
   final _clips = <(String, bool)>[]; // (text, fromLaptop)
+  String? _lastPhoneClip; // newest text both sides already have: never sent back and forth again
 
   Connection get conn => widget.conn;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // what's already on the phone clipboard when the app starts is old: only send later copies
+    Clipboard.getData(Clipboard.kTextPlain).then((d) => _lastPhoneClip ??= d?.text, onError: (_) {});
     _sub = conn.messages.listen(_onMessage);
     _poll = Timer.periodic(const Duration(milliseconds: 1500), (_) => _refresh());
     _tick = Timer.periodic(const Duration(milliseconds: 250), (_) {
@@ -61,6 +65,7 @@ class _ControlsTabState extends State<ControlsTab> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub.cancel();
     _poll?.cancel();
     _tick?.cancel();
@@ -89,6 +94,7 @@ class _ControlsTabState extends State<ControlsTab> {
           if (_clips.length > 10) _clips.removeLast();
         });
         if (m['manual'] != true && widget.settings.clipAuto) {
+          _lastPhoneClip = text; // don't send it back to the laptop on the next return to the app
           Clipboard.setData(ClipboardData(text: text)); // native: always works, unlike the browser
           if (mounted) toast(context, '📋 Laptop clipboard copied to phone');
         }
@@ -315,12 +321,36 @@ class _ControlsTabState extends State<ControlsTab> {
       if (mounted) toast(context, 'Phone clipboard is empty');
       return;
     }
-    if (conn.send({'t': 'clip_set', 'v': text, 'paste': paste})) {
+    _sendClip(text, paste: paste);
+  }
+
+  bool _sendClip(String text, {bool paste = false}) {
+    if (!conn.send({'t': 'clip_set', 'v': text, 'paste': paste})) return false;
+    _lastPhoneClip = text;
+    if (mounted) {
       setState(() {
         _clips.removeWhere((c) => c.$1 == text);
         _clips.insert(0, (text, false));
+        if (_clips.length > 10) _clips.removeLast();
       });
     }
+    return true;
+  }
+
+  /// Phone -> laptop auto-copy. Android only lets the app in front read the clipboard (no background
+  /// watching), so whatever was copied in another app is sent when you come back to Fasway.
+  Future<void> _syncPhoneClipboard() async {
+    if (!widget.settings.clipAuto) return;
+    await Future<void>.delayed(const Duration(milliseconds: 400)); // the window needs focus first
+    if (!mounted || !widget.settings.clipAuto) return;
+    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text ?? '';
+    if (text.isEmpty || text == _lastPhoneClip) return;
+    _sendClip(text); // the laptop answers with "Sent to laptop clipboard"
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _syncPhoneClipboard();
   }
 
   Widget _clipboard() => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -331,7 +361,8 @@ class _ControlsTabState extends State<ControlsTab> {
         if (_clips.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 8),
-            child: Text('Copy something on the laptop – it shows up here.', style: TextStyle(color: C.muted, fontSize: 13)),
+            child: Text('Copy on the laptop and it shows up here. With Auto-copy on, what you copy on the phone '
+                'is sent to the laptop when you come back to Fasway.', style: TextStyle(color: C.muted, fontSize: 13)),
           ),
         for (final (text, fromLaptop) in _clips)
           Container(
