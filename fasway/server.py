@@ -111,6 +111,19 @@ class FaswayServer:
         self.on_file_received(final, self.devices.devices.get(dev, {}).get("name", "Phone"))
         return web.json_response({"ok": True, "name": final.name})
 
+    async def clip(self, request):
+        """Phone -> laptop clipboard without the app open ("Copy to laptop" in the phone's text menu)."""
+        if self._trusted_phone(request) is None:
+            raise web.HTTPForbidden(text="not a trusted phone")
+        m = await request.json()
+        text = str(m.get("v", ""))[:1_000_000]
+        if not text:
+            return web.json_response({"ok": False})
+        self._clip_from_phone = text   # don't push it back to the phone
+        ok = await self._sys(sysctl.set_clipboard, text)
+        log.info("clipboard set from phone (%d chars)", len(text))
+        return web.json_response({"ok": bool(ok)})
+
     async def download(self, request):
         """Laptop -> phone: a file offered with offer_files (the id is the permission)."""
         path = self.files.offered(request.match_info["fid"])
@@ -534,6 +547,7 @@ class FaswayServer:
         app.router.add_get("/", self.index)
         app.router.add_get("/ws", self.ws)
         app.router.add_post("/upload", self.upload)
+        app.router.add_post("/clip", self.clip)
         app.router.add_get("/files/{fid}", self.download)
         app.router.add_get("/{name}", self.static)
 

@@ -28,6 +28,14 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // How to reach the laptop, for "Copy to laptop" (works while Fasway itself is closed).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/link").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "save" -> CopyToLaptopActivity.saveLink(this, call.arguments as Map<*, *>)
+                "clear" -> CopyToLaptopActivity.clearLink(this)
+            }
+            result.success(null)
+        }
         // Files received from the laptop: save to Downloads/Fasway and open them.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/files").setMethodCallHandler { call, result ->
             when (call.method) {

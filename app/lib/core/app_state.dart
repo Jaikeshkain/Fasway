@@ -58,6 +58,7 @@ class AppState extends ChangeNotifier {
     connection = null;
     laptop = null;
     prefs.remove('laptop');
+    Connection.clearNativeLink(); // "Copy to laptop" stops sending there
     notifyListeners();
   }
 }

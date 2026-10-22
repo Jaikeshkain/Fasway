@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'discovery.dart';
 import 'identity.dart';
@@ -138,6 +139,7 @@ class Connection extends ChangeNotifier {
           case 'hello':
             laptopOs = (m['os'] ?? 'win') as String;
             _set(LinkState.connected);
+            _saveNativeLink();
         }
         _messages.add(m);
       },
@@ -196,6 +198,24 @@ class Connection extends ChangeNotifier {
     ws.add(jsonEncode(m));
     return true;
   }
+
+  static const _link = MethodChannel('fasway/link');
+
+  /// Tells the Android side how to reach this laptop, for "Copy to laptop" in other apps' text menu
+  /// (which runs without the Flutter app). The address that works now goes first.
+  void _saveNativeLink() {
+    if (laptop.fp.isEmpty) return; // only ever talk to a pinned certificate
+    final hosts = {?address, ..._candidates()}.toList();
+    _link.invokeMethod('save', {
+      'hosts': hosts,
+      'port': laptop.port,
+      'fp': laptop.fp,
+      'id': identity.id,
+      'key': identity.key,
+    }).catchError((Object _) => null); // tests / non-Android: no native side
+  }
+
+  static void clearNativeLink() => _link.invokeMethod('clear').catchError((Object _) => null);
 
   /// HTTPS to the connected laptop (file transfers): same pinned certificate as the websocket.
   HttpClient httpClient() => HttpClient()

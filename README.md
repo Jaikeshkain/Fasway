@@ -137,6 +137,7 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
   - **📋 Paste on laptop:** does the same and presses Ctrl+V (⌘V on Mac).
   - The first time, Chrome asks to allow clipboard access.
   - In the Android app, *Auto-copy* also works the other way: text you copy in another phone app is sent to the laptop when you switch back to Fasway.
+  - **Copy to laptop** (Android app): select text in any app and pick **Copy to laptop** in the selection menu (sometimes under ⋮), or share text to Fasway. It goes straight to the laptop clipboard without opening Fasway. (Android doesn't let apps read the clipboard in the background, so a plain Copy can't be sent automatically.)
 - **Files** (Android app, its own tab): every transfer shows live progress, speed and time left, with cancel and retry, plus a list of recent transfers.
   - **Phone → laptop:** **Send to laptop** picks any files; they're saved in `Downloads\Fasway` on the laptop (a notification says when one arrives). **Show on laptop** opens that folder.
   - **Laptop → phone:** drag files (or a folder) onto the Fasway window on the laptop, or click **Send files to phone…**. They download to the phone's `Downloads/Fasway`, and you can open them from the list. The web app downloads them in the browser.
