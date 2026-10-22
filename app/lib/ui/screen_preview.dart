@@ -26,7 +26,12 @@ class PreviewController extends ChangeNotifier {
   RTCPeerConnection? _pc;
   MediaStreamTrack? _audioTrack;
   late final StreamSubscription _sub;
-  bool _active = false, _starting = false, _disposed = false;
+  bool _active = false, _disposed = false;
+  // Every start and stop gets a new number; work left over from an older start (a slow setup, the
+  // laptop's answer to a replaced offer) sees the number changed and drops out. Before, quickly
+  // turning the screen off and on could apply an old answer to the new connection: black screen.
+  int _gen = 0, _offerId = 0;
+  Future<void>? _rendererInit;
   Timer? _retry;
   String _lastQuality = 'medium';
 
@@ -47,17 +52,17 @@ class PreviewController extends ChangeNotifier {
   }
 
   Future<void> _start() async {
-    if (_starting || _disposed) return;
-    _starting = true;
+    if (_disposed) return;
+    final gen = ++_gen;
     _retry?.cancel();
     message = 'Connecting to screen…';
     notifyListeners();
     try {
-      if (!_rendererReady) {
-        await renderer.initialize();
-        renderer.onResize = notifyListeners;
-        _rendererReady = true;
-      }
+      final r = renderer;
+      await (_rendererInit ??= r.initialize());
+      if (gen != _gen) return;
+      r.onResize = notifyListeners;
+      _rendererReady = true;
       // play laptop sound like media (speaker / Bluetooth), not like a phone call through the earpiece,
       // and don't steal audio focus from the phone's own music
       await Helper.setAndroidAudioConfiguration(AndroidAudioConfiguration(
@@ -67,7 +72,12 @@ class PreviewController extends ChangeNotifier {
         androidAudioAttributesUsageType: AndroidAudioAttributesUsageType.media,
         androidAudioAttributesContentType: AndroidAudioAttributesContentType.movie,
       ));
+      if (gen != _gen) return;
       final pc = await createPeerConnection({'iceServers': [], 'sdpSemantics': 'unified-plan'});
+      if (gen != _gen) {
+        await pc.close();
+        return;
+      }
       _pc = pc;
       await pc.addTransceiver(
           kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
@@ -76,6 +86,7 @@ class PreviewController extends ChangeNotifier {
           kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
           init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly));
       pc.onTrack = (e) {
+        if (_pc != pc) return;
         if (e.track.kind == 'video' && e.streams.isNotEmpty) {
           renderer.srcObject = e.streams.first;
         } else if (e.track.kind == 'audio') {
@@ -105,15 +116,22 @@ class PreviewController extends ChangeNotifier {
       await pc.setLocalDescription(await pc.createOffer());
       // the laptop doesn't trickle ICE: send the offer with all candidates (max ~1.5 s wait)
       await gathered.future.timeout(const Duration(milliseconds: 1500), onTimeout: () {});
-      if (_pc != pc || !_active) return;
+      if (_pc != pc || gen != _gen || !_active) return;
       final desc = await pc.getLocalDescription();
       final q = Settings.quality[settings.screenQuality] ?? Settings.quality['medium']!;
-      conn.send({'t': 'rtc_offer', 'sdp': desc!.sdp, 'type': desc.type, 'w': q.w, 'fps': q.fps});
+      _offerId = gen;
+      conn.send({'t': 'rtc_offer', 'sdp': desc!.sdp, 'type': desc.type, 'w': q.w, 'fps': q.fps, 'id': gen});
+      // no picture after a while (offer lost in a reconnect, laptop busy…): start over instead of staying black
+      _retry = Timer(const Duration(seconds: 10), () {
+        if (gen == _gen && _active && pc.connectionState != RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+          _stop(notifyLaptop: true);
+          _start();
+        }
+      });
     } catch (e) {
+      if (gen != _gen) return;
       message = 'Screen error: $e';
       notifyListeners();
-    } finally {
-      _starting = false;
     }
   }
 
@@ -122,6 +140,9 @@ class PreviewController extends ChangeNotifier {
       case 'rtc_answer':
         final pc = _pc;
         if (pc == null) return;
+        if (m['id'] != null && m['id'] != _offerId) return; // answer to an offer that was replaced
+        final signaling = await pc.getSignalingState();
+        if (_pc != pc || signaling != RTCSignalingState.RTCSignalingStateHaveLocalOffer) return; // already answered
         if (m['warn'] != null) message = m['warn'] as String;
         audioSupported = m['audio'] != false;
         if (audioOn) conn.send({'t': 'audio', 'on': true}); // re-enable after a reconnect
@@ -158,6 +179,7 @@ class PreviewController extends ChangeNotifier {
   }
 
   void _stop({required bool notifyLaptop}) {
+    _gen++;
     _retry?.cancel();
     if (notifyLaptop) conn.send({'t': 'rtc_stop'});
     final pc = _pc;
@@ -177,6 +199,7 @@ class PreviewController extends ChangeNotifier {
     old.onResize = null;
     renderer = RTCVideoRenderer();
     _rendererReady = false;
+    _rendererInit = null;
     // the old view can still be on screen this frame: release it a moment later
     Timer(const Duration(seconds: 1), () {
       old.srcObject = null;

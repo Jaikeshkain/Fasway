@@ -5,16 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/connection.dart';
-import '../core/files.dart';
 import '../core/settings.dart';
 import 'common.dart';
 
-/// Laptop status, Now Playing, volume / brightness, clipboard sync, file sharing and power.
+/// Laptop status, Now Playing, volume / brightness, clipboard sync and power.
 class ControlsTab extends StatefulWidget {
-  const ControlsTab({super.key, required this.conn, required this.settings, required this.files, required this.active});
+  const ControlsTab({super.key, required this.conn, required this.settings, required this.active});
   final Connection conn;
   final Settings settings;
-  final FileTransfers files;
   final bool active;
   @override
   State<ControlsTab> createState() => _ControlsTabState();
@@ -396,94 +394,6 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
         TextButton(onPressed: () => conn.send({'t': 'clip_get'}), child: const Text('Get current laptop clipboard')),
       ]);
 
-  // ---------- files ----------
-  Future<void> _pickAndSend() async {
-    if (!conn.isConnected) {
-      toast(context, 'Not connected to the laptop');
-      return;
-    }
-    try {
-      await widget.files.pickAndSend();
-    } catch (e) {
-      if (mounted) toast(context, "Couldn't pick files: $e");
-    }
-  }
-
-  static String _size(int b) => b < 1024
-      ? '$b B'
-      : b < 1 << 20
-          ? '${(b / 1024).toStringAsFixed(0)} KB'
-          : b < 1 << 30
-              ? '${(b / (1 << 20)).toStringAsFixed(1)} MB'
-              : '${(b / (1 << 30)).toStringAsFixed(2)} GB';
-
-  Widget _transferRow(Transfer t) {
-    final status = switch (t.state) {
-      TransferState.waiting => 'Waiting…',
-      TransferState.running => t.size > 0 ? '${_size(t.done)} / ${_size(t.size)}' : _size(t.done),
-      TransferState.done => t.toLaptop ? 'Sent · laptop Downloads\\Fasway' : 'Saved · phone Downloads/Fasway',
-      TransferState.failed => t.error ?? 'Failed',
-    };
-    final canOpen = !t.toLaptop && t.state == TransferState.done && (t.saved?.startsWith('content://') ?? false);
-    return Container(
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-      decoration: BoxDecoration(color: C.panel2, borderRadius: BorderRadius.circular(10)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          Text(t.toLaptop ? '📤' : '📥', style: const TextStyle(fontSize: 18)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(t.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-              Text(status,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: t.state == TransferState.failed ? C.bad : C.muted, fontSize: 11)),
-            ]),
-          ),
-          if (canOpen)
-            IconButton(
-              tooltip: 'Open',
-              icon: const Icon(Icons.open_in_new_rounded, size: 20),
-              onPressed: () async {
-                if (!await widget.files.open(t) && mounted) toast(context, 'No app on the phone can open this file');
-              },
-            ),
-        ]),
-        if (t.state == TransferState.running)
-          Padding(
-            padding: const EdgeInsets.only(top: 6, right: 6),
-            child: LinearProgressIndicator(value: t.progress, minHeight: 3, borderRadius: BorderRadius.circular(2)),
-          ),
-      ]),
-    );
-  }
-
-  Widget _files() => ListenableBuilder(
-        listenable: widget.files,
-        builder: (context, _) {
-          final items = widget.files.items;
-          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              KeyButton(label: '📤 Send files to laptop', fontSize: 13, height: 46, onPress: _pickAndSend),
-              KeyButton(label: '📂 Show on laptop', fontSize: 13, height: 46, onPress: () => conn.send({'t': 'files_open'})),
-            ]),
-            if (items.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                    'Files you send are saved in Downloads\\Fasway on the laptop. To get files on the phone, drop them '
-                    'on the Fasway window on the laptop – they are saved in Downloads/Fasway here.',
-                    style: TextStyle(color: C.muted, fontSize: 13)),
-              ),
-            for (final t in items) _transferRow(t),
-            if (items.any((t) => t.state == TransferState.done || t.state == TransferState.failed))
-              TextButton(onPressed: widget.files.clearFinished, child: const Text('Clear finished')),
-          ]);
-        },
-      );
-
   // ---------- power ----------
   Widget _power() {
     Widget b(String label, String a, {String? confirmText, bool danger = false}) => KeyButton(
@@ -520,7 +430,6 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
           ]),
           child: _clipboard(),
         ),
-        Panel(title: 'Files', child: _files()),
         Panel(title: 'Power', child: _power()),
       ]);
 }

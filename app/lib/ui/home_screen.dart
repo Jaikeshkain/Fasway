@@ -7,6 +7,7 @@ import 'apps_tab.dart';
 import 'common.dart';
 import 'connect_screen.dart';
 import 'controls_tab.dart';
+import 'files_tab.dart';
 import 'keyboard_tab.dart';
 import 'screen_preview.dart';
 import 'settings_sheet.dart';
@@ -95,7 +96,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       KeyboardTab(conn: conn, settings: s.settings, preview: _preview),
       VoiceTab(conn: conn, settings: s.settings),
       AppsTab(conn: conn, settings: s.settings, active: _tab == 3),
-      ControlsTab(conn: conn, settings: s.settings, files: _files, active: _tab == 4),
+      FilesTab(conn: conn, files: _files),
+      ControlsTab(conn: conn, settings: s.settings, active: _tab == 5),
     ];
     return Scaffold(
       appBar: AppBar(
@@ -128,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       bottomNavigationBar: NavigationBar(
         backgroundColor: const Color(0xFF0C0E12),
         height: 64,
+        labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
         selectedIndex: _tab,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         onDestinationSelected: (i) {
@@ -135,12 +138,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           setState(() => _tab = i);
           _sync();
         },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.mouse_rounded), label: 'Touchpad'),
-          NavigationDestination(icon: Icon(Icons.keyboard_rounded), label: 'Keyboard'),
-          NavigationDestination(icon: Icon(Icons.mic_rounded), label: 'Voice'),
-          NavigationDestination(icon: Icon(Icons.apps_rounded), label: 'Apps'),
-          NavigationDestination(icon: Icon(Icons.tune_rounded), label: 'Controls'),
+        destinations: [
+          const NavigationDestination(icon: Icon(Icons.mouse_rounded), label: 'Touchpad'),
+          const NavigationDestination(icon: Icon(Icons.keyboard_rounded), label: 'Keyboard'),
+          const NavigationDestination(icon: Icon(Icons.mic_rounded), label: 'Voice'),
+          const NavigationDestination(icon: Icon(Icons.apps_rounded), label: 'Apps'),
+          NavigationDestination(
+            icon: ListenableBuilder(
+              listenable: _files,
+              builder: (_, _) {
+                final n = _files.active.length;
+                return Badge(isLabelVisible: n > 0, label: Text('$n'), child: const Icon(Icons.swap_vert_rounded));
+              },
+            ),
+            label: 'Files',
+          ),
+          const NavigationDestination(icon: Icon(Icons.tune_rounded), label: 'Controls'),
         ],
       ),
     );

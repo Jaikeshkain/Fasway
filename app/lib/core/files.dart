@@ -20,8 +20,29 @@ class Transfer {
   TransferState state = TransferState.waiting;
   String? error;
   String? saved; // received file on the phone (content:// uri or path), for opening
+  DateTime? started, finished;
+  bool cancelled = false;
+  HttpClient? _client;
+  Future<void> Function()? _job;
 
   double? get progress => size > 0 ? (done / size).clamp(0.0, 1.0) : null;
+  bool get active => state == TransferState.waiting || state == TransferState.running;
+  bool get canOpen => !toLaptop && state == TransferState.done && (saved?.startsWith('content://') ?? false);
+
+  /// Bytes per second so far.
+  double get speed {
+    final s = started;
+    if (s == null) return 0;
+    final ms = (finished ?? DateTime.now()).difference(s).inMilliseconds;
+    return ms < 300 ? 0 : done * 1000 / ms;
+  }
+
+  /// Time left, when it can be estimated.
+  Duration? get eta {
+    final v = speed;
+    if (state != TransferState.running || size <= 0 || v <= 0) return null;
+    return Duration(seconds: ((size - done) / v).ceil());
+  }
 }
 
 /// File sharing with the laptop.
@@ -47,7 +68,40 @@ class FileTransfers extends ChangeNotifier {
   DateTime _lastTick = DateTime(0);
   bool _disposed = false;
 
-  bool get busy => items.any((t) => t.state == TransferState.running || t.state == TransferState.waiting);
+  List<Transfer> get active => items.where((t) => t.active).toList();
+
+  /// Progress of everything still going (0..1), null when unknown.
+  double? get totalProgress {
+    final a = active;
+    final size = a.fold<int>(0, (s, t) => s + t.size);
+    if (a.isEmpty || size <= 0) return null;
+    return (a.fold<int>(0, (s, t) => s + t.done) / size).clamp(0.0, 1.0);
+  }
+
+  void cancel(Transfer t) {
+    if (!t.active) return;
+    t.cancelled = true;
+    t._client?.close(force: true); // breaks the running request
+    if (t.state == TransferState.waiting) {
+      t.state = TransferState.failed;
+      t.error = 'Cancelled';
+    }
+    notifyListeners();
+  }
+
+  void retry(Transfer t) {
+    final job = t._job;
+    if (job == null || t.active) return;
+    t
+      ..cancelled = false
+      ..done = 0
+      ..error = null
+      ..started = null
+      ..finished = null
+      ..state = TransferState.waiting;
+    _run(t, job);
+    notifyListeners();
+  }
 
   void _onMessage(Map<String, dynamic> m) {
     if (m['t'] != 'file_offer') return;
@@ -89,20 +143,27 @@ class FileTransfers extends ChangeNotifier {
   }
 
   void _run(Transfer t, Future<void> Function() job) {
+    t._job = job;
     _chain = _chain.then((_) async {
-      if (_disposed) return;
+      if (_disposed || t.cancelled) return;
       t.state = TransferState.running;
+      t.started = DateTime.now();
       notifyListeners();
       try {
         await job();
+        if (t.cancelled) throw 'Cancelled';
         t.state = TransferState.done;
       } catch (e) {
         t.state = TransferState.failed;
-        t.error = '$e';
+        t.error = t.cancelled ? 'Cancelled' : '$e';
       }
+      t.finished = DateTime.now();
+      t._client = null;
       if (!_disposed) notifyListeners();
     });
   }
+
+  HttpClient _clientFor(Transfer t) => t._client = conn.httpClient();
 
   void _progress(Transfer t, int bytes) {
     t.done += bytes;
@@ -121,7 +182,7 @@ class FileTransfers extends ChangeNotifier {
 
   Future<void> _upload(PlatformFile f, Transfer t) async {
     final uri = _uri('/upload', {'name': f.name});
-    final client = conn.httpClient();
+    final client = _clientFor(t);
     try {
       final req = await client.postUrl(uri);
       conn.authHeaders.forEach(req.headers.set);
@@ -142,7 +203,7 @@ class FileTransfers extends ChangeNotifier {
 
   Future<void> _download(String id, Transfer t) async {
     final uri = _uri('/files/$id');
-    final client = conn.httpClient();
+    final client = _clientFor(t);
     final tmp = File('${(await getTemporaryDirectory()).path}/fasway-${DateTime.now().microsecondsSinceEpoch}.part');
     try {
       final res = await (await client.getUrl(uri)).close();

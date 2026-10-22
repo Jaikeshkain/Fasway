@@ -283,6 +283,8 @@ class FaswayServer:
             await pc.setLocalDescription(await pc.createAnswer())  # aiortc waits for ICE gathering
             reply = {"t": "rtc_answer", "sdp": pc.localDescription.sdp, "type": pc.localDescription.type,
                      "audio": audio.SUPPORTED}
+            if "id" in m:   # lets the phone ignore the answer to an offer it already replaced
+                reply["id"] = m["id"]
             problem = screen_permission_problem()
             if problem:
                 reply["warn"] = problem
