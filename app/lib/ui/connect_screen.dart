@@ -26,10 +26,13 @@ class ConnectScreen extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               const Spacer(),
-              const Icon(Icons.laptop_chromebook_rounded, size: 72, color: C.accent),
+              const Appear(child: _PulsingLogo()),
               const SizedBox(height: 16),
-              const Text('Fasway',
-                  textAlign: TextAlign.center, style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
+              const Appear(
+                delay: Duration(milliseconds: 60),
+                child: Text('Fasway',
+                    textAlign: TextAlign.center, style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700)),
+              ),
               const SizedBox(height: 8),
               const Text(
                 'Control your laptop from this phone.\nOpen Fasway on the laptop and scan its QR code.',
@@ -37,10 +40,16 @@ class ConnectScreen extends StatelessWidget {
                 style: TextStyle(color: C.muted, height: 1.5),
               ),
               const SizedBox(height: 28),
-              FilledButton.icon(
-                onPressed: () => _scan(context),
+              Appear(
+                delay: const Duration(milliseconds: 140),
+                child: FilledButton.icon(
+                onPressed: () {
+                  Fx.tap();
+                  _scan(context);
+                },
                 icon: const Icon(Icons.qr_code_scanner_rounded),
                 label: const Padding(padding: EdgeInsets.all(14), child: Text('Scan QR code', style: TextStyle(fontSize: 16))),
+              ),
               ),
               const SizedBox(height: 24),
               ListenableBuilder(
@@ -55,12 +64,12 @@ class ConnectScreen extends StatelessWidget {
                     const Text('Found on this Wi-Fi (scan its QR once to pair):',
                         style: TextStyle(color: C.muted, fontSize: 13)),
                     for (final f in found)
-                      ListTile(
+                      Appear(key: ValueKey(f.name), child: ListTile(
                         leading: const Icon(Icons.laptop_windows_rounded, color: C.accent),
                         title: Text(f.name),
                         subtitle: Text('${f.ip}:${f.port}', style: const TextStyle(color: C.muted)),
                         dense: true,
-                      ),
+                      )),
                   ]);
                 },
               ),
@@ -117,5 +126,40 @@ class _QrScanPageState extends State<QrScanPage> {
               child: Text(_hint!, textAlign: TextAlign.center, style: const TextStyle(color: C.warn, fontSize: 15)),
             ),
         ]),
+      );
+}
+
+/// The laptop icon with a soft "searching" glow that breathes.
+class _PulsingLogo extends StatefulWidget {
+  const _PulsingLogo();
+  @override
+  State<_PulsingLogo> createState() => _PulsingLogoState();
+}
+
+class _PulsingLogoState extends State<_PulsingLogo> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (_, child) {
+          final v = Curves.easeInOut.transform(_c.value);
+          return Container(
+            width: 120,
+            height: 120,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle, boxShadow: [
+              BoxShadow(color: C.accent.withValues(alpha: 0.10 + 0.18 * v), blurRadius: 30 + 20 * v, spreadRadius: 2 + 8 * v),
+            ]),
+            child: child,
+          );
+        },
+        child: const Icon(Icons.laptop_chromebook_rounded, size: 72, color: C.accent),
       );
 }

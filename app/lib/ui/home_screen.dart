@@ -25,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
   late PreviewController _preview;
   late FileTransfers _files;
+  LinkState? _lastState;
   bool _resumed = true;
 
   AppState get s => widget.state;
@@ -79,11 +80,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   FileTransfers _newFiles() => FileTransfers(conn)
     ..onNotice = (text) {
       if (mounted) toast(context, text);
-    };
+    }
+    ..onFinished = (t) => t.state == TransferState.done ? Fx.success() : Fx.heavy();
 
   /// The screen preview runs only while it is switched on, visible and connected (saves battery).
   void _sync() {
     if (!mounted) return;
+    if (conn.state != _lastState) {
+      if (conn.state == LinkState.connected && _lastState != null) Fx.success(); // back online
+      _lastState = conn.state;
+    }
     final want = s.settings.screenOn && _resumed && conn.isConnected && (_tab == 0 || _tab == 1);
     _preview.setActive(want);
     setState(() {});
@@ -108,13 +114,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _StatusChip(conn),
           IconButton(
             tooltip: 'Laptop screen',
-            icon: Icon(Icons.desktop_windows_rounded, color: s.settings.screenOn ? C.accent : C.muted),
-            onPressed: () => s.settings.set('screenOn', !s.settings.screenOn),
+            icon: AnimatedScale(
+              scale: s.settings.screenOn ? 1.08 : 1,
+              duration: Motion.medium,
+              curve: Motion.spring,
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: s.settings.screenOn ? C.accent : C.muted),
+                duration: Motion.medium,
+                builder: (_, c, _) => Icon(Icons.desktop_windows_rounded, color: c),
+              ),
+            ),
+            onPressed: () {
+              Fx.select();
+              s.settings.set('screenOn', !s.settings.screenOn);
+            },
           ),
           IconButton(
             tooltip: 'Settings',
             icon: const Icon(Icons.settings_rounded),
             onPressed: () => showSettings(context, s, onPairNew: () {
+              Fx.tap();
               Navigator.push(context, MaterialPageRoute(builder: (_) => ConnectScreen(s, canGoBack: true)));
             }),
           ),
@@ -123,9 +142,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: Stack(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: IndexedStack(index: _tab, children: tabs),
+          child: _TabStack(index: _tab, children: tabs),
         ),
-        _PairingOverlay(s),
+        Positioned.fill(
+          child: AnimatedSwitcher(duration: Motion.medium, child: _PairingOverlay(s, key: ValueKey(conn.state))),
+        ),
       ]),
       bottomNavigationBar: NavigationBar(
         backgroundColor: const Color(0xFF0C0E12),
@@ -133,7 +154,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
         selectedIndex: _tab,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        animationDuration: Motion.slow,
         onDestinationSelected: (i) {
+          if (i != _tab) Fx.select();
           FocusScope.of(context).unfocus();
           setState(() => _tab = i);
           _sync();
@@ -175,21 +198,128 @@ class _StatusChip extends StatelessWidget {
       LinkState.wrongLaptop => (C.bad, 'Wrong laptop'),
       LinkState.offline => (C.bad, 'Offline'),
     };
-    return GestureDetector(
+    final busy = conn.state == LinkState.connecting || conn.state == LinkState.waitingApproval;
+    return Pressable(
       onTap: conn.isConnected ? null : conn.reconnectNow,
-      child: Row(children: [
-        Container(width: 9, height: 9, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 6),
-        Text(text, style: const TextStyle(color: C.muted, fontSize: 13)),
-        const SizedBox(width: 4),
-      ]),
+      haptics: !conn.isConnected,
+      child: AnimatedContainer(
+        duration: Motion.medium,
+        curve: Motion.curve,
+        padding: const EdgeInsets.fromLTRB(9, 5, 11, 5),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          _Dot(color: color, pulsing: busy),
+          const SizedBox(width: 7),
+          AnimatedSwitcher(
+            duration: Motion.medium,
+            transitionBuilder: (c, a) => FadeTransition(
+              opacity: a,
+              child: SlideTransition(position: Tween(begin: const Offset(0, 0.4), end: Offset.zero).animate(a), child: c),
+            ),
+            child: Text(text, key: ValueKey(text), style: const TextStyle(color: C.text, fontSize: 12.5)),
+          ),
+        ]),
+      ),
     );
   }
 }
 
+/// Status dot; breathes while connecting.
+class _Dot extends StatefulWidget {
+  const _Dot({required this.color, required this.pulsing});
+  final Color color;
+  final bool pulsing;
+  @override
+  State<_Dot> createState() => _DotState();
+}
+
+class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.pulsing) _c.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_Dot old) {
+    super.didUpdateWidget(old);
+    if (widget.pulsing && !_c.isAnimating) _c.repeat(reverse: true);
+    if (!widget.pulsing && _c.isAnimating) _c.animateTo(0, duration: Motion.medium);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _c,
+        builder: (_, _) => TweenAnimationBuilder<Color?>(
+          tween: ColorTween(end: widget.color),
+          duration: Motion.medium,
+          builder: (_, c, _) => Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(color: c, shape: BoxShape.circle, boxShadow: [
+              BoxShadow(color: (c ?? widget.color).withValues(alpha: 0.6 * _c.value + 0.25), blurRadius: 4 + 6 * _c.value),
+            ]),
+          ),
+        ),
+      );
+}
+
+/// IndexedStack (every tab keeps its state) whose newly selected tab fades and slides in from the
+/// side it was picked on.
+class _TabStack extends StatefulWidget {
+  const _TabStack({required this.index, required this.children});
+  final int index;
+  final List<Widget> children;
+  @override
+  State<_TabStack> createState() => _TabStackState();
+}
+
+class _TabStackState extends State<_TabStack> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: Motion.medium, value: 1);
+  late final _a = CurvedAnimation(parent: _c, curve: Motion.curve);
+  double _dir = 1;
+
+  @override
+  void didUpdateWidget(_TabStack old) {
+    super.didUpdateWidget(old);
+    if (old.index != widget.index) {
+      _dir = widget.index > old.index ? 1 : -1;
+      _c.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => IndexedStack(index: widget.index, children: [
+        // same wrappers for every tab at all times, so switching never rebuilds a tab from scratch
+        for (var i = 0; i < widget.children.length; i++)
+          FadeTransition(
+            opacity: i == widget.index ? _a : kAlwaysCompleteAnimation,
+            child: SlideTransition(
+              position: i == widget.index
+                  ? Tween(begin: Offset(0.05 * _dir, 0), end: Offset.zero).animate(_a)
+                  : const AlwaysStoppedAnimation(Offset.zero),
+              child: widget.children[i],
+            ),
+          ),
+      ]);
+}
 /// Full-screen messages for pairing: waiting for approval, declined, removed, wrong laptop.
 class _PairingOverlay extends StatelessWidget {
-  const _PairingOverlay(this.s);
+  const _PairingOverlay(this.s, {super.key});
   final AppState s;
 
   @override
@@ -220,7 +350,7 @@ class _PairingOverlay extends StatelessWidget {
       _ => null,
     };
     if (info == null) return const SizedBox.shrink();
-    return Positioned.fill(
+    return SizedBox.expand(
       child: Container(
         color: C.bg,
         padding: const EdgeInsets.all(32),

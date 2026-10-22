@@ -9,6 +9,8 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
     context: context,
     backgroundColor: C.panel,
     isScrollControlled: true,
+    showDragHandle: true,
+    sheetAnimationStyle: const AnimationStyle(duration: Motion.slow, reverseDuration: Motion.medium),
     builder: (c) => ListenableBuilder(
       listenable: s.settings,
       builder: (c, _) {
@@ -17,13 +19,16 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('$label  ${value.toStringAsFixed(1)}', style: const TextStyle(color: C.muted, fontSize: 14)),
-                Slider(value: value, min: min, max: max, divisions: ((max - min) * 10).round(), onChanged: (v) => st.set(key, v)),
+                Slider(value: value, min: min, max: max, divisions: ((max - min) * 10).round(), onChanged: (v) {
+                  if (v != value) Fx.select(); // a tick per step
+                  st.set(key, v);
+                }),
               ],
             );
         final l = s.laptop;
         return SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               const Text('Settings', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 12),
@@ -34,13 +39,20 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Natural scrolling'),
                 value: st.natural,
-                onChanged: (v) => st.set('natural', v),
+                onChanged: (v) {
+                  Fx.select();
+                  st.set('natural', v);
+                },
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Vibrate on click'),
+                title: const Text('Vibration'),
+                subtitle: const Text('Haptic feedback on taps, keys and clicks', style: TextStyle(color: C.muted, fontSize: 12)),
                 value: st.haptics,
-                onChanged: (v) => st.set('haptics', v),
+                onChanged: (v) {
+                  st.set('haptics', v);
+                  Fx.select(); // after the change: turning it on gives a buzz
+                },
               ),
               const Text('Screen preview quality', style: TextStyle(color: C.muted, fontSize: 14)),
               DropdownButton<String>(
@@ -51,7 +63,10 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
                   DropdownMenuItem(value: 'medium', child: Text('Medium (720p, 30 fps)')),
                   DropdownMenuItem(value: 'high', child: Text('High (1080p, 30 fps)')),
                 ],
-                onChanged: (v) => st.set('screenQuality', v!),
+                onChanged: (v) {
+                  Fx.select();
+                  st.set('screenQuality', v!);
+                },
               ),
               const Divider(height: 28),
               if (l != null) ...[

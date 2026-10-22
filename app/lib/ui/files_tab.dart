@@ -53,15 +53,21 @@ class FilesTab extends StatelessWidget {
               ),
             ]),
             const SizedBox(height: 10),
-            if (active.isNotEmpty) _Summary(files) else const _HowTo(),
+            AnimatedSwitcher(
+              duration: Motion.medium,
+              switchInCurve: Motion.curve,
+              transitionBuilder: (c, a) => FadeTransition(
+                  opacity: a, child: SizeTransition(sizeFactor: a, alignment: Alignment.topCenter, child: c)),
+              child: active.isNotEmpty ? _Summary(files, key: const ValueKey('sum')) : const _HowTo(key: ValueKey('how')),
+            ),
             if (active.isNotEmpty) ...[
               _SectionTitle('In progress', trailing: '${active.length}'),
-              for (final t in active) _TransferCard(t, files),
+              for (final t in active) Appear(key: ObjectKey(t), child: _TransferCard(t, files)),
             ],
             if (history.isNotEmpty) ...[
               _SectionTitle('Recent',
                   action: TextButton(onPressed: files.clearFinished, child: const Text('Clear'))),
-              for (final t in history) _TransferCard(t, files),
+              for (final t in history) Appear(key: ObjectKey(t), child: _TransferCard(t, files)),
             ],
             if (files.items.isEmpty)
               const Padding(
@@ -115,7 +121,8 @@ class _ActionCard extends StatelessWidget {
   final bool primary;
 
   @override
-  Widget build(BuildContext context) => Material(
+  Widget build(BuildContext context) => Pressable(
+        child: Material(
         color: primary ? C.accent : C.panel,
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
@@ -135,12 +142,13 @@ class _ActionCard extends StatelessWidget {
             ]),
           ),
         ),
+      ),
       );
 }
 
 /// How to get files from the laptop (shown when nothing is going on).
 class _HowTo extends StatelessWidget {
-  const _HowTo();
+  const _HowTo({super.key});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -166,7 +174,7 @@ class _HowTo extends StatelessWidget {
 
 /// Overall progress while files are moving.
 class _Summary extends StatelessWidget {
-  const _Summary(this.files);
+  const _Summary(this.files, {super.key});
   final FileTransfers files;
 
   @override
@@ -187,7 +195,15 @@ class _Summary extends StatelessWidget {
           width: 52,
           height: 52,
           child: Stack(alignment: Alignment.center, children: [
-            CircularProgressIndicator(value: p, strokeWidth: 5, backgroundColor: C.panel2),
+            if (p == null)
+              const CircularProgressIndicator(strokeWidth: 5, backgroundColor: C.panel2)
+            else
+              TweenAnimationBuilder<double>(
+                tween: Tween(end: p),
+                duration: Motion.slow,
+                curve: Motion.curve,
+                builder: (_, v, _) => CircularProgressIndicator(value: v, strokeWidth: 5, backgroundColor: C.panel2),
+              ),
             Text(p == null ? '…' : '${(p * 100).floor()}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
           ]),
         ),
@@ -313,11 +329,14 @@ class _TransferCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(0, 10, 8, 0),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: t.state == TransferState.waiting ? 0 : t.progress,
-                minHeight: 6,
-                backgroundColor: C.panel2,
-              ),
+              child: t.state == TransferState.running && t.progress == null
+                  ? const LinearProgressIndicator(minHeight: 6, backgroundColor: C.panel2)
+                  : TweenAnimationBuilder<double>(
+                      tween: Tween(end: t.state == TransferState.waiting ? 0 : t.progress ?? 0),
+                      duration: Motion.slow,
+                      curve: Motion.curve,
+                      builder: (_, v, _) => LinearProgressIndicator(value: v, minHeight: 6, backgroundColor: C.panel2),
+                    ),
             ),
           ),
       ]),

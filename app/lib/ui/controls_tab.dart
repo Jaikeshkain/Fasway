@@ -153,7 +153,10 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
                 child: ChoiceChip(
                   label: Text('${s['status'] == 'playing' ? '▶ ' : ''}${s['app']}'),
                   selected: s['id'] == cur?['id'],
-                  onSelected: (_) => setState(() => _npSel = s['id'] as String),
+                  onSelected: (_) {
+                    Fx.select();
+                    setState(() => _npSel = s['id'] as String);
+                  },
                 ),
               ),
           ]),
@@ -230,6 +233,7 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
             onChanged: vol == null
                 ? null
                 : (v) {
+                    if ((v / 10).floor() != ((_volDrag ?? vol) / 10).floor()) Fx.select(); // tick every 10 %
                     setState(() => _volDrag = v);
                     if (DateTime.now().difference(_lastVolSend).inMilliseconds > 120) {
                       _lastVolSend = DateTime.now();
@@ -253,6 +257,7 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
                   value: bright.clamp(0, 100),
                   max: 100,
                   onChanged: (v) {
+                    if ((v / 10).floor() != ((_brightDrag ?? bright) / 10).floor()) Fx.select();
                     setState(() => _brightDrag = v);
                     if (DateTime.now().difference(_lastBrightSend).inMilliseconds > 300) {
                       _lastBrightSend = DateTime.now();
@@ -426,7 +431,12 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
           title: 'Clipboard',
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
             const Text('Auto-copy', style: TextStyle(fontSize: 12, color: C.muted)),
-            Switch(value: widget.settings.clipAuto, onChanged: (v) => setState(() => widget.settings.set('clipAuto', v))),
+            Switch(
+                value: widget.settings.clipAuto,
+                onChanged: (v) {
+                  Fx.select();
+                  setState(() => widget.settings.set('clipAuto', v));
+                }),
           ]),
           child: _clipboard(),
         ),

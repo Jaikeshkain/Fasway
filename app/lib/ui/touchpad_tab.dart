@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../core/connection.dart';
 import '../core/settings.dart';
@@ -53,8 +54,28 @@ class _Finger {
   int t;
 }
 
-class _TouchpadState extends State<Touchpad> {
+class _Ripple {
+  _Ripple(this.pos, this.color);
+  final Offset pos;
+  final Color color;
+  final born = DateTime.now();
+  double get age => DateTime.now().difference(born).inMilliseconds / 450; // 0..1
+}
+
+class _TouchpadState extends State<Touchpad> with SingleTickerProviderStateMixin {
   final _fingers = <int, _Finger>{};
+  final _ripples = <_Ripple>[];
+  late final Ticker _ticker = createTicker((_) {
+    _ripples.removeWhere((r) => r.age >= 1);
+    if (_ripples.isEmpty) _ticker.stop();
+    setState(() {});
+  });
+
+  /// Click feedback you can see: a ring spreading from the finger.
+  void _ripple(Offset pos, Color color) {
+    _ripples.add(_Ripple(pos, color));
+    if (!_ticker.isActive) _ticker.start();
+  }
   double _accX = 0, _accY = 0, _scrX = 0, _scrY = 0;
   Timer? _flushTimer;
   // current gesture
@@ -106,6 +127,7 @@ class _TouchpadState extends State<Touchpad> {
     }
     _max = max(_max, _fingers.length);
     if (_fingers.length > 1) _dragPending = false;
+    setState(() {}); // finger glow
   }
 
   void _move(PointerMoveEvent e) {
@@ -127,6 +149,7 @@ class _TouchpadState extends State<Touchpad> {
       _scrY += dy * k * dir;
       _scrX += -dx * k * dir;
       _scheduleFlush();
+      setState(() {});
       return;
     }
     if (_max > 1 && !_dragging) return; // leftover finger after a scroll / right-click
@@ -135,7 +158,8 @@ class _TouchpadState extends State<Touchpad> {
       _dragPending = false;
       _dragging = true;
       conn.send({'t': 'b', 'b': 'left', 'a': 'down'});
-      haptic(s.haptics);
+      Fx.press(); // grabbed
+      _ripple(e.localPosition, C.accent);
     }
     final v = dist / dt; // logical px per ms
     final gain = s.speed * (1 + s.accel * min(max(v - 0.15, 0), 3));
@@ -158,7 +182,8 @@ class _TouchpadState extends State<Touchpad> {
     } else if (!cancelled && now - _t0 < tapMs + (_max > 1 ? 80 : 0) && _moved < tapMove) {
       final b = _max == 1 ? 'left' : _max == 2 ? 'right' : 'middle';
       conn.send({'t': 'b', 'b': b, 'a': 'click'});
-      haptic(s.haptics);
+      b == 'left' ? Fx.tap() : Fx.press();
+      _ripple(last?.pos ?? e.localPosition, b == 'left' ? C.accent : b == 'right' ? C.warn : C.ok);
       if (b == 'left') {
         _lastTapT = now;
         _lastTapPos = last?.pos ?? Offset.zero;
@@ -171,6 +196,7 @@ class _TouchpadState extends State<Touchpad> {
   @override
   void dispose() {
     _flushTimer?.cancel();
+    _ticker.dispose();
     if (_dragging) conn.send({'t': 'b', 'b': 'left', 'a': 'up'}); // never leave the button held
     super.dispose();
   }
@@ -181,19 +207,78 @@ class _TouchpadState extends State<Touchpad> {
         onPointerMove: _move,
         onPointerUp: _up,
         onPointerCancel: (e) => _up(e, cancelled: true),
-        child: Container(
+        child: AnimatedContainer(
+          duration: Motion.medium,
+          curve: Motion.curve,
           width: double.infinity,
           decoration: BoxDecoration(
-            color: C.panel,
+            color: _fingers.isEmpty ? C.panel : const Color(0xFF1E222B),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _dragging ? C.accent : const Color(0xFF2A2F3A)),
+            border: Border.all(color: _dragging ? C.accent : const Color(0xFF2A2F3A), width: _dragging ? 2 : 1),
+            boxShadow: _dragging ? [BoxShadow(color: C.accent.withValues(alpha: 0.25), blurRadius: 18)] : null,
           ),
-          alignment: Alignment.center,
-          child: const Text(
-            '1 finger: move · tap: click\n2 fingers: scroll · 2-finger tap: right click\ndouble-tap & drag: drag',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFF4A4F5C), fontSize: 13, height: 1.5),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Stack(children: [
+              Center(
+                child: AnimatedOpacity(
+                  opacity: _fingers.isEmpty ? 1 : 0.25,
+                  duration: Motion.medium,
+                  child: const Text(
+                    '1 finger: move · tap: click\n2 fingers: scroll · 2-finger tap: right click\ndouble-tap & drag: drag',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFF4A4F5C), fontSize: 13, height: 1.5),
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(painter: _PadPainter([for (final f in _fingers.values) f.pos], _ripples, _dragging)),
+                ),
+              ),
+            ]),
           ),
         ),
       );
+}
+
+/// Glow under each finger and the click ripples.
+class _PadPainter extends CustomPainter {
+  _PadPainter(this.fingers, this.ripples, this.dragging);
+  final List<Offset> fingers;
+  final List<_Ripple> ripples;
+  final bool dragging;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final p in fingers) {
+      const r = 44.0;
+      canvas.drawCircle(
+        p,
+        r,
+        Paint()
+          ..shader = RadialGradient(colors: [
+            C.accent.withValues(alpha: dragging ? 0.45 : 0.28),
+            C.accent.withValues(alpha: 0),
+          ]).createShader(Rect.fromCircle(center: p, radius: r)),
+      );
+      canvas.drawCircle(p, 5, Paint()..color = C.accent.withValues(alpha: 0.7));
+    }
+    for (final rp in ripples) {
+      final a = Curves.easeOutCubic.transform(rp.age.clamp(0.0, 1.0));
+      final fade = 1 - a;
+      canvas.drawCircle(rp.pos, 16 + 46 * a, Paint()..color = rp.color.withValues(alpha: 0.16 * fade));
+      canvas.drawCircle(
+        rp.pos,
+        16 + 46 * a,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.5 * fade + 0.5
+          ..color = rp.color.withValues(alpha: 0.75 * fade),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PadPainter old) => true;
 }

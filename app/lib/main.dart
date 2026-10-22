@@ -39,11 +39,19 @@ class _FaswayAppState extends State<FaswayApp> {
     setState(() => _error = null);
     try {
       final s = await AppState.load().timeout(const Duration(seconds: 20));
+      Fx.enabled = s.settings.haptics;
+      s.settings.addListener(() => Fx.enabled = s.settings.haptics);
       if (mounted) setState(() => _state = s);
     } catch (e, st) {
       debugPrint('startup failed: $e\n$st');
       if (mounted) setState(() => _error = e);
     }
+  }
+
+  @override
+  void dispose() {
+    _state?.connection?.dispose(); // stops reconnect timers and the socket
+    super.dispose();
   }
 
   @override
@@ -53,18 +61,35 @@ class _FaswayAppState extends State<FaswayApp> {
       title: 'Fasway',
       debugShowCheckedModeBanner: false,
       theme: faswayTheme(),
-      home: s != null
-          ? ListenableBuilder(
-              listenable: s,
-              builder: (_, _) => s.laptop == null ? ConnectScreen(s) : HomeScreen(s),
-            )
-          : _Boot(error: _error, onRetry: _load),
+      // startup -> connect -> home cross-fade with a slight zoom instead of jumping
+      home: AnimatedSwitcher(
+        duration: Motion.slow,
+        switchInCurve: Motion.curve,
+        switchOutCurve: Curves.easeIn,
+        transitionBuilder: (child, a) => FadeTransition(
+          opacity: a,
+          child: ScaleTransition(scale: Tween(begin: 0.97, end: 1.0).animate(a), child: child),
+        ),
+        child: s != null
+            ? ListenableBuilder(
+                key: const ValueKey('app'),
+                listenable: s,
+                builder: (_, _) => AnimatedSwitcher(
+                  duration: Motion.slow,
+                  switchInCurve: Motion.curve,
+                  child: s.laptop == null
+                      ? ConnectScreen(s, key: const ValueKey('connect'))
+                      : HomeScreen(s, key: const ValueKey('home')),
+                ),
+              )
+            : _Boot(key: ValueKey('boot$_error'), error: _error, onRetry: _load),
+      ),
     );
   }
 }
 
 class _Boot extends StatelessWidget {
-  const _Boot({required this.error, required this.onRetry});
+  const _Boot({super.key, required this.error, required this.onRetry});
   final Object? error;
   final VoidCallback onRetry;
 

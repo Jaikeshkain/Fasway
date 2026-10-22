@@ -62,6 +62,7 @@ class FileTransfers extends ChangeNotifier {
   late final StreamSubscription _sub;
   final List<Transfer> items = []; // newest first
   void Function(String text)? onNotice; // short messages for a toast
+  void Function(Transfer t)? onFinished; // a transfer completed or failed (haptics)
 
   static const _native = MethodChannel('fasway/files');
   Future<void> _chain = Future.value();
@@ -159,7 +160,10 @@ class FileTransfers extends ChangeNotifier {
       }
       t.finished = DateTime.now();
       t._client = null;
-      if (!_disposed) notifyListeners();
+      if (!_disposed) {
+        notifyListeners();
+        if (!t.cancelled) onFinished?.call(t);
+      }
     });
   }
 

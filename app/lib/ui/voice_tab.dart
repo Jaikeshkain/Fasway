@@ -133,14 +133,19 @@ class _VoiceTabState extends State<VoiceTab> {
           const SizedBox(height: 4),
           DropdownButtonFormField<String>(
             initialValue: langs.containsKey(s.lang) ? s.lang : 'mix-roman',
+            isExpanded: true, // long language names get an ellipsis instead of overflowing
             decoration: InputDecoration(
               labelText: 'Language',
               filled: true,
               fillColor: C.panel2,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
             ),
-            items: [for (final e in langs.entries) DropdownMenuItem(value: e.key, child: Text(e.value.$1))],
+            items: [
+              for (final e in langs.entries)
+                DropdownMenuItem(value: e.key, child: Text(e.value.$1, overflow: TextOverflow.ellipsis)),
+            ],
             onChanged: (v) async {
+              Fx.select();
               await s.set('lang', v!);
               if (_listening) {
                 await _stt.stop(); // restarts with the new language via onStatus
@@ -165,26 +170,16 @@ class _VoiceTabState extends State<VoiceTab> {
           ),
           const SizedBox(height: 14),
           Center(
-            child: GestureDetector(
-              onTap: _toggle,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: _listening ? C.bad : C.panel2,
-                  shape: BoxShape.circle,
-                  boxShadow: _listening ? [BoxShadow(color: C.bad.withValues(alpha: 0.5), blurRadius: 22, spreadRadius: 4)] : null,
-                ),
-                child: const Icon(Icons.mic_rounded, size: 46),
-              ),
-            ),
+            child: Pressable(onTap: _toggle, scale: 0.9, child: _MicButton(listening: _listening)),
           ),
           const SizedBox(height: 6),
           Text(_status, textAlign: TextAlign.center, style: const TextStyle(color: C.muted, fontSize: 13)),
           SwitchListTile(
             value: _review,
-            onChanged: (v) => setState(() => _review = v),
+            onChanged: (v) {
+              Fx.select();
+              setState(() => _review = v);
+            },
             title: const Text('Review before sending', style: TextStyle(fontSize: 14, color: C.muted)),
             dense: true,
             contentPadding: EdgeInsets.zero,
@@ -217,5 +212,79 @@ class _VoiceTabState extends State<VoiceTab> {
           const SizedBox(height: 8),
           _keyRow(),
         ]),
+      );
+}
+
+/// The mic: sound-wave rings spread out from it while it listens.
+class _MicButton extends StatefulWidget {
+  const _MicButton({required this.listening});
+  final bool listening;
+  @override
+  State<_MicButton> createState() => _MicButtonState();
+}
+
+class _MicButtonState extends State<_MicButton> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.listening) _c.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_MicButton old) {
+    super.didUpdateWidget(old);
+    if (widget.listening && !_c.isAnimating) _c.repeat();
+    if (!widget.listening && _c.isAnimating) _c.stop();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 150,
+        height: 150,
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (_, _) => Stack(alignment: Alignment.center, children: [
+            if (widget.listening)
+              for (final phase in const [0.0, 0.5])
+                Builder(builder: (_) {
+                  final v = (_c.value + phase) % 1;
+                  return Container(
+                    width: 96 + 54 * v,
+                    height: 96 + 54 * v,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: C.bad.withValues(alpha: 0.55 * (1 - v)), width: 2),
+                    ),
+                  );
+                }),
+            AnimatedContainer(
+              duration: Motion.medium,
+              curve: Motion.curve,
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: widget.listening ? C.bad : C.panel2,
+                shape: BoxShape.circle,
+                boxShadow: widget.listening
+                    ? [BoxShadow(color: C.bad.withValues(alpha: 0.45), blurRadius: 22, spreadRadius: 2)]
+                    : null,
+              ),
+              child: AnimatedSwitcher(
+                duration: Motion.medium,
+                transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+                child: Icon(widget.listening ? Icons.graphic_eq_rounded : Icons.mic_rounded,
+                    key: ValueKey(widget.listening), size: 46),
+              ),
+            ),
+          ]),
+        ),
       );
 }

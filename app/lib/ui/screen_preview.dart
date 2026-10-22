@@ -231,10 +231,16 @@ class ScreenPreview extends StatelessWidget {
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: settings,
         builder: (context, _) {
-          if (!settings.screenOn) return const SizedBox.shrink();
           final large = allowLarge && settings.screenLarge;
           final h = MediaQuery.sizeOf(context).height;
-          return Padding(
+          // switching the preview on / off: it grows open and folds away instead of popping
+          return AnimatedSize(
+            duration: Motion.medium,
+            curve: Motion.curve,
+            alignment: Alignment.topCenter,
+            child: !settings.screenOn
+                ? const SizedBox(width: double.infinity)
+                : Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxHeight: large ? h * 0.5 : h * 0.3),
@@ -263,6 +269,7 @@ class ScreenPreview extends StatelessWidget {
                 ),
               ),
             ),
+          ),
           );
         },
       );
