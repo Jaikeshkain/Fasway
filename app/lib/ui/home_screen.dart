@@ -72,8 +72,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState st) {
-    _resumed = st == AppLifecycleState.resumed;
-    if (_resumed && !conn.isConnected) conn.reconnectNow(); // back from the home screen
+    // inactive = still on screen but lost focus (notification shade, a dialog on top): keep streaming
+    _resumed = st == AppLifecycleState.resumed || st == AppLifecycleState.inactive;
+    if (st == AppLifecycleState.resumed && !conn.isConnected) conn.reconnectNow(); // back from the home screen
     _sync();
   }
 
