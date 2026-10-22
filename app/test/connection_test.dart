@@ -3,6 +3,7 @@
 //   flutter test test/connection_test.dart --dart-define=FASWAY_TEST_FP=<sha256 hex>
 // (skipped when FASWAY_TEST_FP is not set)
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fasway/core/connection.dart';
 import 'package:fasway/core/discovery.dart';
@@ -64,6 +65,29 @@ void main() {
       unawaited(c.connect());
       await waitFor(c, () => c.isConnected);
       expect(c.state, LinkState.connected);
+      c.dispose();
+    });
+
+    test('file upload over pinned HTTPS with the phone key', () async {
+      final c = make(); // paired by the first test
+      unawaited(c.connect());
+      await waitFor(c, () => c.isConnected);
+      Future<(int, String)> upload(Map<String, String> headers) async {
+        final client = c.httpClient();
+        final req = await client.postUrl(c.httpUri('/upload', {'name': 'from app ü.txt'})!);
+        headers.forEach(req.headers.set);
+        req.add(utf8.encode('hello from the app'));
+        final res = await req.close();
+        final body = await res.transform(utf8.decoder).join();
+        client.close();
+        return (res.statusCode, body);
+      }
+
+      final (status, body) = await upload(c.authHeaders);
+      expect(status, 200);
+      expect((jsonDecode(body) as Map)['name'], startsWith('from app ü'));
+      final (bad, _) = await upload({'X-Fasway-Device': c.identity.id, 'X-Fasway-Key': 'wrong-key-0123456789'});
+      expect(bad, 403);
       c.dispose();
     });
 

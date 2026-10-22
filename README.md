@@ -136,6 +136,10 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
   - **📤 Send phone clipboard:** puts the phone's clipboard on the laptop clipboard.
   - **📋 Paste on laptop:** does the same and presses Ctrl+V (⌘V on Mac).
   - The first time, Chrome asks to allow clipboard access.
+  - In the Android app, *Auto-copy* also works the other way: text you copy in another phone app is sent to the laptop when you switch back to Fasway.
+- **Files** (Android app):
+  - **Phone → laptop:** **📤 Send files to laptop** picks any files; they're saved in `Downloads\Fasway` on the laptop (a notification says when one arrives). **📂 Show on laptop** opens that folder.
+  - **Laptop → phone:** drag files (or a folder) onto the Fasway window on the laptop, or click **Send files to phone…**. They download to the phone's `Downloads/Fasway`, and you can open them from the list. The web app downloads them in the browser.
 - **Power:** Lock, Display off, Sleep, Sign out, Restart, Shut down. The last four ask for confirmation first.
 - On **Mac**, Restart, Shut down and Sign out may ask once for permission to control "System Events".
 

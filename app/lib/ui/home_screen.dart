@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
 import '../core/connection.dart';
+import '../core/files.dart';
 import 'apps_tab.dart';
 import 'common.dart';
 import 'connect_screen.dart';
@@ -22,6 +23,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
   late PreviewController _preview;
+  late FileTransfers _files;
   bool _resumed = true;
 
   AppState get s => widget.state;
@@ -32,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _preview = PreviewController(conn, s.settings);
+    _files = _newFiles();
     conn.addListener(_sync);
     s.settings.addListener(_sync);
     conn.messages.listen((m) {
@@ -49,6 +52,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       old.state.connection?.removeListener(_sync);
       _preview.dispose();
       _preview = PreviewController(conn, s.settings);
+      _files.dispose();
+      _files = _newFiles();
       conn.addListener(_sync);
     }
   }
@@ -59,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     s.connection?.removeListener(_sync);
     s.settings.removeListener(_sync);
     _preview.dispose();
+    _files.dispose();
     super.dispose();
   }
 
@@ -68,6 +74,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_resumed && !conn.isConnected) conn.reconnectNow(); // back from the home screen
     _sync();
   }
+
+  FileTransfers _newFiles() => FileTransfers(conn)
+    ..onNotice = (text) {
+      if (mounted) toast(context, text);
+    };
 
   /// The screen preview runs only while it is switched on, visible and connected (saves battery).
   void _sync() {
@@ -84,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       KeyboardTab(conn: conn, settings: s.settings, preview: _preview),
       VoiceTab(conn: conn, settings: s.settings),
       AppsTab(conn: conn, settings: s.settings, active: _tab == 3),
-      ControlsTab(conn: conn, settings: s.settings, active: _tab == 4),
+      ControlsTab(conn: conn, settings: s.settings, files: _files, active: _tab == 4),
     ];
     return Scaffold(
       appBar: AppBar(

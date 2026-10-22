@@ -9,6 +9,7 @@ import ssl
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 from aiohttp import web, WSMsgType
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
@@ -16,6 +17,7 @@ from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from . import audio, status
 from .actions import QuickActions, run_action
 from .devices import DeviceStore
+from .files import FileShare, open_folder
 from .platform_input import inp, nowplaying, screen_permission_problem, sysctl
 from .screen import ScreenGrabber, ScreenTrack
 
@@ -33,8 +35,10 @@ WEB_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
 class FaswayServer:
     def __init__(self, token: str, port: int, cert: Path, key: Path, on_clients=None, data_dir: Path | None = None,
-                 on_local_ip=None, on_pair_request=None, on_devices=None):
+                 on_local_ip=None, on_pair_request=None, on_devices=None, on_file_received=None, inbox: Path | None = None):
         self.token = token
+        self.on_file_received = on_file_received or (lambda path, phone: None)  # a phone sent a file
+        self.files = FileShare(inbox)
         self.on_local_ip = on_local_ip or (lambda ip: None)  # which laptop address phones actually reach
         # on_pair_request(name, ip, answer): ask the user; call answer(True/False). None = accept (tests)
         self.on_pair_request = on_pair_request
@@ -77,6 +81,51 @@ class FaswayServer:
         resp = web.FileResponse(path)
         resp.headers["Cache-Control"] = "no-cache"
         return resp
+
+    # ---------- files ----------
+    def _trusted_phone(self, request) -> str | None:
+        """The trusted phone making this HTTP request (it sends its id + key like on the websocket)."""
+        dev_id = request.headers.get("X-Fasway-Device", "")[:64]
+        key = request.headers.get("X-Fasway-Key", "")[:128]
+        return dev_id if dev_id and self.devices.verify(dev_id, key) else None
+
+    async def upload(self, request):
+        """Phone -> laptop: the request body is the file, ?name= its name. Saved to Downloads/Fasway."""
+        dev = self._trusted_phone(request)
+        if dev is None:
+            raise web.HTTPForbidden(text="not a trusted phone")
+        part = self.files.new_upload()
+        size = 0
+        try:
+            with open(part, "wb") as f:
+                async for chunk in request.content.iter_chunked(1 << 16):
+                    f.write(chunk)
+                    size += len(chunk)
+            if request.content_length is not None and size != request.content_length:
+                raise ConnectionError("upload cut short")
+            final = self.files.finish_upload(part, request.query.get("name", "file"))
+        except BaseException:   # phone went away mid-upload: no half files in Downloads
+            part.unlink(missing_ok=True)
+            raise
+        log.info("received %s (%d bytes)", final.name, size)
+        self.on_file_received(final, self.devices.devices.get(dev, {}).get("name", "Phone"))
+        return web.json_response({"ok": True, "name": final.name})
+
+    async def download(self, request):
+        """Laptop -> phone: a file offered with offer_files (the id is the permission)."""
+        path = self.files.offered(request.match_info["fid"])
+        if path is None:
+            raise web.HTTPNotFound(text="file no longer offered")
+        resp = web.FileResponse(path)
+        resp.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(path.name)}"
+        return resp
+
+    def offer_files(self, paths) -> int:
+        """Called from the UI thread: send files to the connected phones. Returns how many files."""
+        offers = self.files.offer(paths)
+        if offers and self.loop:
+            asyncio.run_coroutine_threadsafe(self._broadcast({"t": "file_offer", "files": offers}), self.loop)
+        return len(offers)
 
     # ---------- websocket ----------
     async def ws(self, request):
@@ -469,6 +518,9 @@ class FaswayServer:
             inp.hotkey(str(m.get("k", "")))
         elif t == "ping":
             return {"t": "pong", "id": m.get("id")}
+        elif t == "files_open":   # show the received files on the laptop
+            self.files.inbox.mkdir(parents=True, exist_ok=True)
+            open_folder(self.files.inbox)
         elif t == "diag":   # browser diagnostics from the phone (e.g. why full screen failed), for the log
             log.info("phone diagnostics: %s", json.dumps(m, ensure_ascii=False)[:1500])
         return None
@@ -479,6 +531,8 @@ class FaswayServer:
         app = web.Application()
         app.router.add_get("/", self.index)
         app.router.add_get("/ws", self.ws)
+        app.router.add_post("/upload", self.upload)
+        app.router.add_get("/files/{fid}", self.download)
         app.router.add_get("/{name}", self.static)
 
         ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)

@@ -197,6 +197,21 @@ class Connection extends ChangeNotifier {
     return true;
   }
 
+  /// HTTPS to the connected laptop (file transfers): same pinned certificate as the websocket.
+  HttpClient httpClient() => HttpClient()
+    ..connectionTimeout = const Duration(seconds: 6)
+    ..badCertificateCallback = (cert, host, port) => _checkCert(cert);
+
+  /// URL on the connected laptop, or null while not connected.
+  Uri? httpUri(String path, [Map<String, String>? query]) {
+    final a = address;
+    if (a == null || !isConnected) return null;
+    return Uri(scheme: 'https', host: a, port: laptop.port, path: path, queryParameters: query);
+  }
+
+  /// Proves to the laptop that a request comes from this trusted phone.
+  Map<String, String> get authHeaders => {'X-Fasway-Device': identity.id, 'X-Fasway-Key': identity.key};
+
   void disconnect() {
     _stopped = true;
     _retryTimer?.cancel();

@@ -96,6 +96,14 @@
       else if (m.t === "actions") renderActions(m.items);
       else if (m.t === "toast") notify(m.msg);
       else if (m.t === "alert") { notify(m.msg, 5000); if (navigator.vibrate) navigator.vibrate([200, 100, 200]); }
+      else if (m.t === "file_offer") { // files dropped on the laptop window: download them
+        notify(m.files.length === 1 ? `📥 Receiving ${m.files[0].name}` : `📥 Receiving ${m.files.length} files`);
+        for (const f of m.files) {
+          const a = document.createElement("a");
+          a.href = `/files/${encodeURIComponent(f.id)}`; a.download = f.name;
+          document.body.appendChild(a); a.click(); a.remove();
+        }
+      }
       else if (m.t === "clip_ok") notify(!m.ok ? "Couldn't set the laptop clipboard" : m.paste ? "Pasted on laptop" : "Sent to laptop clipboard");
     };
     ws.onclose = (e) => {

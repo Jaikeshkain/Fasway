@@ -14,7 +14,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
 import qrcode
 from PIL import ImageTk
@@ -22,6 +22,7 @@ from PIL import ImageTk
 from . import autostart
 from .certs import cert_fingerprint, ensure_cert
 from .discovery import Announcer, new_device_id
+from .files import open_folder
 from .platform_input import permission_problem
 from .server import FaswayServer
 from .tray import Tray
@@ -172,7 +173,8 @@ class App:
                                    on_clients=lambda n: self.events.put(("clients", n)),
                                    on_local_ip=lambda ip: self.events.put(("local_ip", ip)),
                                    on_pair_request=lambda name, ip, answer: self.events.put(("pair", (name, ip, answer))),
-                                   on_devices=lambda: self.events.put(("devices", None)))
+                                   on_devices=lambda: self.events.put(("devices", None)),
+                                   on_file_received=lambda path, phone: self.events.put(("file_received", (path, phone))))
         threading.Thread(target=self._run_server, name="server", daemon=True).start()
         threading.Thread(target=self._control_loop, args=(lock,), name="control", daemon=True).start()
 
@@ -296,6 +298,21 @@ class App:
         tk.Label(root, textvariable=self.status_var, bg="white", font=(FONT, 10, "bold"),
                  fg="#0a7").pack(pady=(6, 4))
 
+        # file sharing: drop files anywhere on this window (Windows) or pick them
+        drop = tk.Frame(root, bg="#f3f6ff", highlightbackground="#9db8ff", highlightthickness=1)
+        drop.pack(fill="x", padx=20, pady=(4, 2))
+        tk.Label(drop, text="📁 Drop files on this window to send them to your phone" if sys.platform == "win32"
+                 else "📁 Send files to your phone", font=(FONT, 9, "bold"), fg=FG, bg="#f3f6ff").pack(pady=(6, 2))
+        fb = tk.Frame(drop, bg="#f3f6ff")
+        fb.pack(pady=(0, 4))
+        ttk.Button(fb, text="Send files to phone…", command=self.pick_files).pack(side="left", padx=4)
+        ttk.Button(fb, text="Open received files", command=lambda: open_folder(self.server.files.inbox)).pack(side="left", padx=4)
+        self.files_var = tk.StringVar(value=f"Files from the phone are saved in {self.server.files.inbox}")
+        tk.Label(drop, textvariable=self.files_var, font=(FONT, 8), fg=MUTED, bg="#f3f6ff",
+                 wraplength=360, justify="center").pack(padx=8, pady=(0, 6))
+        self._drop_ready = False
+        root.after(300, self._enable_drop)
+
         # trusted phones: only these can connect without asking; Remove disconnects one immediately
         self.phones_frame = tk.Frame(root, bg="white")
         self.phones_frame.pack(fill="x", padx=20, pady=(2, 14))
@@ -305,6 +322,39 @@ class App:
         root.after(100, self._poll)
         root.after(10_000, self._watch_network)
         root.protocol("WM_DELETE_WINDOW", self.hide)
+
+    # ---------- files ----------
+    def _enable_drop(self):
+        if self._drop_ready or sys.platform != "win32":
+            return
+        from . import filedrop_win
+        # the window may still be hidden (started in the tray): then this runs again from show()
+        self._drop_ready = filedrop_win.enable(self.root, lambda paths: self.events.put(("send_files", paths)))
+
+    def pick_files(self):
+        paths = filedialog.askopenfilenames(parent=self.root, title="Send files to your phone")
+        if paths:
+            self.send_files(list(paths))
+
+    def send_files(self, paths: list[str]):
+        files = []
+        for p in map(Path, paths):   # a dropped folder sends the files inside it
+            if p.is_dir():
+                files += [f for f in sorted(p.rglob("*")) if f.is_file()][:500]
+            elif p.is_file():
+                files.append(p)
+        if not files:
+            return
+        if not self.phones:
+            self.files_var.set("No phone connected: open Fasway on the phone, then send the files again.")
+            return
+        n = self.server.offer_files(files)
+        what = files[0].name if n == 1 else f"{n} files"
+        self.files_var.set(f"📤 Sending {what} to your phone (saved in its Downloads/Fasway)")
+
+    def _file_received(self, path: Path, phone: str):
+        self.files_var.set(f"📥 Received {path.name} from {phone}")
+        self.tray.notify(f"📥 {path.name} received from {phone} (Downloads\\Fasway)")
 
     def refresh_qr(self):
         url = self.url()
@@ -408,6 +458,7 @@ class App:
         self.root.attributes("-topmost", True)
         self.root.after(300, lambda: self.root.attributes("-topmost", False))
         self.root.focus_force()
+        self.root.after(300, self._enable_drop)
 
     def hide(self):
         if not self.tray.icon:   # no tray available: closing the window quits
@@ -450,6 +501,10 @@ class App:
                     self.tray.refresh()
                 elif kind == "toggle_admin":
                     self._toggle_admin()
+                elif kind == "send_files":
+                    self.send_files(val)
+                elif kind == "file_received":
+                    self._file_received(*val)
         except queue.Empty:
             pass
         self.root.after(150, self._poll)
