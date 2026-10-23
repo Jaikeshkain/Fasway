@@ -91,6 +91,17 @@ void main() {
       c.dispose();
     });
 
+    test('measures link quality: a local connection is not weak', () async {
+      final c = make();
+      unawaited(c.connect());
+      await waitFor(c, () => c.isConnected);
+      await Future.delayed(const Duration(seconds: 10)); // pings every 3 s, 3 samples needed
+      expect(c.rttMs, isNotNull);
+      expect(c.rttMs!, lessThan(300));
+      expect(c.weak, isFalse);
+      c.dispose();
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
     test('a different certificate is refused (impostor)', () async {
       final c = make(fingerprint: '0' * 64, devId: 'phoneTEST0002');
       unawaited(c.connect());

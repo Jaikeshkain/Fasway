@@ -26,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late PreviewController _preview;
   late FileTransfers _files;
   LinkState? _lastState;
+  bool _wasWeak = false;
   bool _resumed = true;
 
   AppState get s => widget.state;
@@ -91,6 +92,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (conn.state == LinkState.connected && _lastState != null) Fx.success(); // back online
       _lastState = conn.state;
     }
+    if (conn.weak != _wasWeak) {
+      _wasWeak = conn.weak;
+      if (conn.weak) Fx.heavy(); // the banner appears: make it noticed
+    }
     final allowed = s.settings.screenOn && _resumed && conn.isConnected;
     // on another tab the stream keeps running for a while: coming back shows the picture at once
     _preview.setActive(allowed && (_tab == 0 || _tab == 1),
@@ -142,13 +147,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Stack(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: _TabStack(index: _tab, children: tabs),
-        ),
-        Positioned.fill(
-          child: AnimatedSwitcher(duration: Motion.medium, child: _PairingOverlay(s, key: ValueKey(conn.state))),
+      body: Column(children: [
+        _WeakWifiBanner(conn),
+        Expanded(
+          child: Stack(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: _TabStack(index: _tab, children: tabs),
+            ),
+            Positioned.fill(
+              child: AnimatedSwitcher(duration: Motion.medium, child: _PairingOverlay(s, key: ValueKey(conn.state))),
+            ),
+          ]),
         ),
       ]),
       bottomNavigationBar: NavigationBar(
@@ -193,7 +203,7 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (color, text) = switch (conn.state) {
-      LinkState.connected => (C.ok, 'Connected'),
+      LinkState.connected => conn.weak ? (C.warn, 'Weak Wi-Fi') : (C.ok, 'Connected'),
       LinkState.connecting => (C.warn, 'Connecting…'),
       LinkState.waitingApproval => (C.warn, 'Waiting for approval'),
       LinkState.declined => (C.bad, 'Not allowed'),
@@ -223,6 +233,52 @@ class _StatusChip extends StatelessWidget {
           ),
         ]),
       ),
+    );
+  }
+}
+
+/// Amber bar under the title while the Wi-Fi between phone and laptop is weak.
+class _WeakWifiBanner extends StatelessWidget {
+  const _WeakWifiBanner(this.conn);
+  final Connection conn;
+
+  @override
+  Widget build(BuildContext context) {
+    final show = conn.isConnected && conn.weak;
+    final rtt = conn.rttMs;
+    return AnimatedSize(
+      duration: Motion.medium,
+      curve: Motion.curve,
+      alignment: Alignment.topCenter,
+      child: !show
+          ? const SizedBox(width: double.infinity)
+          : Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: C.warn.withValues(alpha: 0.14),
+                border: Border.all(color: C.warn.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(children: [
+                const Icon(Icons.network_wifi_1_bar_rounded, color: C.warn),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(
+                      rtt == null || rtt >= 3000 ? 'Weak Wi-Fi: messages are getting lost' : 'Weak Wi-Fi: slow connection ($rtt ms)',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Move closer to your Wi-Fi router (or move the laptop closer). Controls may lag until it improves.',
+                      style: TextStyle(color: C.muted, fontSize: 12),
+                    ),
+                  ]),
+                ),
+              ]),
+            ),
     );
   }
 }

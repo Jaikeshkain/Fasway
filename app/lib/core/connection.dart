@@ -114,6 +114,7 @@ class Connection extends ChangeNotifier {
   }
 
   void _attach(WebSocket ws, String addr) {
+    _resetQuality();
     _ws = ws;
     address = addr;
     _retry = 0;
@@ -134,6 +135,11 @@ class Connection extends ChangeNotifier {
           return;
         }
         switch (m['t']) {
+          case 'pong':
+            final id = m['id'];
+            if (id is int && _pending.remove(id)) {
+              _addSample(DateTime.now().millisecondsSinceEpoch - id);
+            }
           case 'pair_wait':
             _set(LinkState.waitingApproval);
           case 'hello':
@@ -154,14 +160,54 @@ class Connection extends ChangeNotifier {
         ws.close(); // silently dead (Wi-Fi switch, laptop asleep): reconnect
         return;
       }
-      send({'t': 'ping', 'id': DateTime.now().millisecondsSinceEpoch});
+      // a ping still unanswered after 3 s counts as lost
+      for (var i = 0; i < _pending.length; i++) {
+        _addSample(_lost);
+      }
+      _pending.clear();
+      final id = DateTime.now().millisecondsSinceEpoch;
+      if (send({'t': 'ping', 'id': id})) _pending.add(id);
     });
+  }
+
+  // ---------- link quality (phone <-> laptop over the local Wi-Fi) ----------
+  /// Weak Wi-Fi between phone and laptop: slow answers or lost pings. The UI asks to move closer to
+  /// the router; the laptop is told too.
+  bool weak = false;
+  int? rttMs; // typical round trip of the last pings
+  static const _lost = 3000;
+  final _pending = <int>{};
+  final _samples = <int>[];
+
+  void _addSample(int ms) {
+    _samples.add(ms);
+    if (_samples.length > 5) _samples.removeAt(0);
+    if (_samples.length < 3) return;
+    final sorted = [..._samples]..sort();
+    final median = sorted[sorted.length ~/ 2];
+    final lost = _samples.where((s) => s >= _lost).length;
+    rttMs = median;
+    // turn weak quickly, back to good only when clearly fine (no flicker on the edge)
+    final nowWeak = weak ? !(median < 150 && lost == 0) : (median > 300 || lost >= 2);
+    if (nowWeak != weak) {
+      weak = nowWeak;
+      send({'t': 'link', 'weak': weak, 'rtt': median});
+      notifyListeners();
+    }
+  }
+
+  void _resetQuality() {
+    _pending.clear();
+    _samples.clear();
+    rttMs = null;
+    weak = false;
   }
 
   void _onClosed(WebSocket ws) {
     if (_ws != ws) return;
     _ws = null;
     _watchdog?.cancel();
+    _resetQuality();
     final code = ws.closeCode;
     if (code == 4003) {
       _set(LinkState.declined);

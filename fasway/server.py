@@ -35,9 +35,10 @@ WEB_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
 class FaswayServer:
     def __init__(self, token: str, port: int, cert: Path, key: Path, on_clients=None, data_dir: Path | None = None,
-                 on_local_ip=None, on_pair_request=None, on_devices=None, on_file_received=None, inbox: Path | None = None):
+                 on_local_ip=None, on_pair_request=None, on_devices=None, on_file_received=None, inbox: Path | None = None, on_link_quality=None):
         self.token = token
         self.on_file_received = on_file_received or (lambda path, phone: None)  # a phone sent a file
+        self.on_link_quality = on_link_quality or (lambda dev, name, weak, rtt: None)  # phone reports Wi-Fi
         self.files = FileShare(inbox)
         self.on_local_ip = on_local_ip or (lambda ip: None)  # which laptop address phones actually reach
         # on_pair_request(name, ip, answer): ask the user; call answer(True/False). None = accept (tests)
@@ -81,6 +82,19 @@ class FaswayServer:
         resp = web.FileResponse(path)
         resp.headers["Cache-Control"] = "no-cache"
         return resp
+
+    # ---------- link quality ----------
+    def _link_quality(self, sess: dict, weak: bool, rtt):
+        sess["weak"] = weak
+        name = self.devices.devices.get(sess["dev"], {}).get("name", "Phone")
+        log.info("Wi-Fi to %s: %s%s", name, "weak" if weak else "good", f" ({rtt} ms)" if rtt else "")
+        self.on_link_quality(sess["dev"], name, weak, rtt)
+        return None
+
+    def alert_phones(self, msg: str):
+        """Called from the UI thread: show a message on every connected phone."""
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(self._broadcast({"t": "alert", "msg": msg}), self.loop)
 
     # ---------- files ----------
     def _trusted_phone(self, request) -> str | None:
@@ -184,6 +198,8 @@ class FaswayServer:
                         reply = await self.handle_screen(sess, m)
                     elif t in SYSTEM_MSGS:
                         reply = await self.handle_system(m)
+                    elif t == "link":   # the phone measured weak / good Wi-Fi to us
+                        reply = self._link_quality(sess, bool(m.get("weak")), m.get("rtt"))
                     else:
                         reply = self.handle(m)
                 except Exception as e:  # never let one bad message kill the session
@@ -194,6 +210,8 @@ class FaswayServer:
         finally:
             for btn in sess["held"]:   # phone vanished mid-drag: don't leave the button stuck down
                 inp.button(btn, "up")
+            if sess.get("weak"):
+                self._link_quality(sess, False, None)
             await self._close_rtc(sess)
             if ws in self.clients:
                 self.clients.discard(ws)

@@ -184,7 +184,8 @@ class App:
                                    on_local_ip=lambda ip: self.events.put(("local_ip", ip)),
                                    on_pair_request=lambda name, ip, answer: self.events.put(("pair", (name, ip, answer))),
                                    on_devices=lambda: self.events.put(("devices", None)),
-                                   on_file_received=lambda path, phone: self.events.put(("file_received", (path, phone))))
+                                   on_file_received=lambda path, phone: self.events.put(("file_received", (path, phone))),
+                                   on_link_quality=lambda *a: self.events.put(("link", a)))
         threading.Thread(target=self._run_server, name="server", daemon=True).start()
         threading.Thread(target=self._control_loop, args=(lock,), name="control", daemon=True).start()
 
@@ -195,6 +196,12 @@ class App:
             self.events.put(("send_menu", pending_send))
         if sys.platform == "win32" and self.cfg.get("send_menu", True):
             shellmenu.install(DATA)       # keeps the right-click entry pointing at this copy of Fasway
+
+        self._weak_phones: dict[str, str] = {}   # phones reporting weak Wi-Fi: id -> name
+        self._laptop_signal: int | None = None    # this laptop's Wi-Fi signal %
+        self._laptop_weak = False
+        self._weak_told: dict[str, float] = {}   # last notification time per subject (no spam)
+        threading.Thread(target=self._watch_wifi, name="wifi", daemon=True).start()
 
         self.tray = Tray(self.events.put, self._tray_state)
         has_tray = self.tray.start()
@@ -302,7 +309,10 @@ class App:
                      wraplength=px(700), justify="left", anchor="w", padx=px(12), pady=px(8)).pack(
                 fill="x", padx=px(22), pady=(0, px(12)))
 
-        body = tk.Frame(root, bg=ui.BG)
+        # weak Wi-Fi warning (shown by _update_status)
+        self.wifi_warn = tk.Label(root, font=(ui.FONT, 9, "bold"), fg="#1a1300", bg=ui.WARN, anchor="w",
+                                  justify="left", wraplength=px(700), padx=px(12), pady=px(8))
+        body = self._body = tk.Frame(root, bg=ui.BG)
         body.pack(fill="both", padx=px(22), pady=(0, px(10)))
         left = tk.Frame(body, bg=ui.BG)
         left.pack(side="left", fill="y", anchor="n")
@@ -392,6 +402,64 @@ class App:
         root.after(100, self._poll)
         root.after(10_000, self._watch_network)
         root.protocol("WM_DELETE_WINDOW", self.hide)
+
+    # ---------- weak Wi-Fi ----------
+    def _watch_wifi(self):
+        from . import wifi
+        while True:
+            self.events.put(("wifi", wifi.signal_percent()))
+            time.sleep(15)
+
+    def _tell(self, key: str, msg: str, every: float = 300):
+        """Tray notification at most every `every` seconds per subject."""
+        now = time.monotonic()
+        if now - self._weak_told.get(key, -1e9) >= every:
+            self._weak_told[key] = now
+            self.tray.notify(msg)
+
+    def _phone_link(self, dev: str, name: str, weak: bool, rtt):
+        if weak:
+            self._weak_phones[dev] = name
+            slow = f" ({rtt} ms)" if rtt and rtt < 3000 else ""
+            self._tell(dev, f"📶 Weak Wi-Fi to {name}{slow}. Move the phone closer to the Wi-Fi router.")
+        else:
+            self._weak_phones.pop(dev, None)
+        self._update_status()
+
+    def _laptop_wifi(self, signal: int | None):
+        self._laptop_signal = signal
+        # weak below 40 %, good again from 55 % (no flapping around one value)
+        weak = signal is not None and (signal < 55 if self._laptop_weak else signal < 40)
+        if weak and not self._laptop_weak:
+            msg = f"Laptop Wi-Fi signal is weak ({signal}%). Move the laptop closer to the router (or use a cable)."
+            self._tell("laptop", "📶 " + msg)
+            if self.phones:
+                self.server.alert_phones("📶 " + msg)
+        self._laptop_weak = weak
+        self._update_status()
+
+    def _update_status(self):
+        if self._laptop_weak:
+            self._set_status("Weak Wi-Fi", ui.WARN)
+            self._set_wifi_warning(f"Weak Wi-Fi on this laptop ({self._laptop_signal}%): move it closer to the router "
+                                   "or use a cable. The phone's controls may lag.")
+        elif self._weak_phones and self.phones:
+            names = ", ".join(self._weak_phones.values())
+            self._set_status("Weak Wi-Fi", ui.WARN)
+            self._set_wifi_warning(f"Weak Wi-Fi to {names}: move the phone closer to the Wi-Fi router.")
+        else:
+            n = self.phones
+            self._set_status(f"{n} phone{'s' if n != 1 else ''} connected" if n else "Waiting for phone",
+                             ui.OK if n else ui.WARN, pulsing=not n)
+            self._set_wifi_warning(None)
+
+    def _set_wifi_warning(self, text: str | None):
+        if text:
+            self.wifi_warn.configure(text="📶  " + text)
+            if not self.wifi_warn.winfo_ismapped():
+                self.wifi_warn.pack(fill="x", padx=int(22 * self.k), pady=(0, int(12 * self.k)), before=self._body)
+        elif self.wifi_warn.winfo_ismapped():
+            self.wifi_warn.pack_forget()
 
     def _set_status(self, text: str, color: str, pulsing: bool = False):
         self.status_var.set(text)
@@ -609,8 +677,7 @@ class App:
                 kind, val = self.events.get_nowait()
                 if kind == "clients":
                     self.phones = val
-                    self._set_status(f"{val} phone{'s' if val != 1 else ''} connected" if val else "Waiting for phone",
-                                     ui.OK if val else ui.WARN, pulsing=not val)
+                    self._update_status()
                     if val and self._pending_send:   # files picked in Explorer before a phone was connected
                         files, self._pending_send = self._pending_send, []
                         self.send_files(files)
@@ -622,7 +689,7 @@ class App:
                     self._ask_pair(*val)
                 elif kind == "status":
                     if val == "running":
-                        self._set_status("Waiting for phone", ui.WARN, pulsing=True)
+                        self._update_status()
                     else:
                         self._set_status(val, ui.BAD)
                 elif kind == "local_ip":
@@ -650,6 +717,10 @@ class App:
                         self._menu_flush = self.root.after(500, self._send_menu_batch)
                 elif kind == "file_received":
                     self._file_received(*val)
+                elif kind == "link":
+                    self._phone_link(*val)
+                elif kind == "wifi":
+                    self._laptop_wifi(val)
         except queue.Empty:
             pass
         self.root.after(150, self._poll)
