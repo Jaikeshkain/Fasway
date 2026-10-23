@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- talk to the laptop on the local network -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- the "Send clipboard" notification (Android 13+ asks once) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <!-- find the laptop on Wi-Fi (mDNS / network service discovery) -->
@@ -60,6 +62,17 @@
                 <data android:mimeType="text/plain"/>
             </intent-filter>
         </activity>
+        <!-- Quick Settings tile: send the phone clipboard to the laptop with one tap -->
+        <service
+            android:name=".SendClipboardTile"
+            android:label="Send clipboard"
+            android:icon="@mipmap/ic_launcher_foreground"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE"/>
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

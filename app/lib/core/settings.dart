@@ -17,6 +17,7 @@ class Settings extends ChangeNotifier {
   String get screenMode => _p.getString('screenMode') ?? 'trackpad'; // trackpad | direct | view
   String get lang => _p.getString('lang') ?? 'mix-roman';
   bool get clipAuto => _p.getBool('clipAuto') ?? true;
+  bool get clipNotify => _p.getBool('clipNotify') ?? true; // "Send clipboard" notification
 
   Future<void> set(String key, Object value) async {
     switch (value) {

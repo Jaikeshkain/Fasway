@@ -27,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late FileTransfers _files;
   LinkState? _lastState;
   bool _wasWeak = false;
+  String? _notified; // laptop shown in the "Send clipboard" notification
   bool _resumed = true;
 
   AppState get s => widget.state;
@@ -91,6 +92,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (conn.state != _lastState) {
       if (conn.state == LinkState.connected && _lastState != null) Fx.success(); // back online
       _lastState = conn.state;
+    }
+    // "Send clipboard" notification: on once connected (if enabled), off when switched off
+    final notify = s.settings.clipNotify && conn.isConnected;
+    if ((notify && _notified != conn.laptop.name) || (!s.settings.clipNotify && _notified != null)) {
+      _notified = s.settings.clipNotify ? conn.laptop.name : null;
+      Connection.clipNotification(s.settings.clipNotify, conn.laptop.name);
     }
     if (conn.weak != _wasWeak) {
       _wasWeak = conn.weak;

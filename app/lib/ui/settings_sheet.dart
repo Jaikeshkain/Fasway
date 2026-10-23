@@ -54,6 +54,19 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
                   Fx.select(); // after the change: turning it on gives a buzz
                 },
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('"Send clipboard" notification'),
+                subtitle: const Text(
+                    'Copied something in another app? Tap Send clipboard in the notification shade. '
+                    'There is also a "Send clipboard" Quick Settings tile.',
+                    style: TextStyle(color: C.muted, fontSize: 12)),
+                value: st.clipNotify,
+                onChanged: (v) {
+                  Fx.select();
+                  st.set('clipNotify', v);
+                },
+              ),
               const Text('Screen preview quality', style: TextStyle(color: C.muted, fontSize: 14)),
               DropdownButton<String>(
                 value: st.screenQuality,

@@ -1,9 +1,12 @@
 package com.fasway.fasway
 
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,8 +26,24 @@ import kotlin.concurrent.thread
  * (Android doesn't let apps read the clipboard in the background, so this replaces copy + switch app.)
  */
 class CopyToLaptopActivity : Activity() {
+    private var waitingForFocus = false
+    private val main = Handler(Looper.getMainLooper())
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.action == ACTION_SEND_CLIPBOARD) {
+            // notification button / Quick Settings tile: the clipboard can be read once this (invisible)
+            // screen has focus
+            waitingForFocus = true
+            main.postDelayed({
+                if (waitingForFocus) {
+                    waitingForFocus = false
+                    toast(applicationContext, "Couldn't read the clipboard – try again")
+                    finish()
+                }
+            }, 2000)
+            return
+        }
         val text = when (intent?.action) {
             Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)
             Intent.ACTION_SEND -> intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
@@ -34,21 +53,38 @@ class CopyToLaptopActivity : Activity() {
             finish()
             return
         }
-        val app = applicationContext
-        thread {
-            val msg = try {
-                send(app, text)
-                "📋 Copied to laptop"
-            } catch (e: Exception) {
-                e.message ?: "Couldn't reach the laptop"
-            }
-            runOnUiThread { Toast.makeText(app, msg, Toast.LENGTH_SHORT).show() }
-        }
+        sendInBackground(applicationContext, text)
         finish() // the toast and the network call outlive the (invisible) activity
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || !waitingForFocus) return
+        waitingForFocus = false
+        val cm = getSystemService(ClipboardManager::class.java)
+        val text = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        if (text.isEmpty()) toast(applicationContext, "The phone clipboard is empty") else sendInBackground(applicationContext, text)
+        finish()
     }
 
     companion object {
         const val PREFS = "fasway_link"
+        const val ACTION_SEND_CLIPBOARD = "com.fasway.fasway.SEND_CLIPBOARD"
+
+        private fun toast(app: Context, msg: String) =
+            Handler(Looper.getMainLooper()).post { Toast.makeText(app, msg, Toast.LENGTH_SHORT).show() }
+
+        fun sendInBackground(app: Context, text: String) {
+            thread {
+                val msg = try {
+                    send(app, text)
+                    "📋 Copied to laptop"
+                } catch (e: Exception) {
+                    e.message ?: "Couldn't reach the laptop"
+                }
+                toast(app, msg)
+            }
+        }
 
         /** Saved by the app whenever it connects: how to reach and authenticate with the laptop. */
         fun saveLink(context: Context, link: Map<*, *>) {

@@ -263,6 +263,11 @@ class Connection extends ChangeNotifier {
 
   static void clearNativeLink() => _link.invokeMethod('clear').catchError((Object _) => null);
 
+  /// The ongoing "Send clipboard" notification (Android only lets apps read the clipboard while on
+  /// screen, so this is the one-tap way to send what was copied in another app).
+  static void clipNotification(bool show, String laptop) =>
+      _link.invokeMethod(show ? 'notify' : 'unnotify', {'laptop': laptop}).catchError((Object _) => null);
+
   /// HTTPS to the connected laptop (file transfers): same pinned certificate as the websocket.
   HttpClient httpClient() => HttpClient()
     ..connectionTimeout = const Duration(seconds: 6)

@@ -1,6 +1,8 @@
 package com.fasway.fasway
 
+import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
 import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
@@ -19,6 +21,15 @@ import java.io.File
 import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
+    private var notifyLaptop: String? = null
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // notifications just allowed: show the "Send clipboard" notification now
+        if (requestCode == 7 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            notifyLaptop?.let { ClipboardNotification.show(this, it) }
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A remote control should not let the phone screen go dark while you use it.
@@ -32,7 +43,20 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/link").setMethodCallHandler { call, result ->
             when (call.method) {
                 "save" -> CopyToLaptopActivity.saveLink(this, call.arguments as Map<*, *>)
-                "clear" -> CopyToLaptopActivity.clearLink(this)
+                "clear" -> {
+                    CopyToLaptopActivity.clearLink(this)
+                    ClipboardNotification.hide(this)
+                }
+                // the "Send clipboard" notification (shown while a laptop is paired)
+                "notify" -> {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7) // asked once by Android
+                    }
+                    notifyLaptop = call.argument<String>("laptop") ?: "laptop"
+                    ClipboardNotification.show(this, notifyLaptop!!)
+                }
+                "unnotify" -> ClipboardNotification.hide(this)
             }
             result.success(null)
         }
