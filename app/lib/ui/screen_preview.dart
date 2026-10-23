@@ -21,7 +21,10 @@ class PreviewController extends ChangeNotifier {
 
   final Connection conn;
   final Settings settings;
-  RTCVideoRenderer renderer = RTCVideoRenderer();
+  // One renderer for the whole session: on some phones (seen on OnePlus) a fresh renderer per stream
+  // often stayed black. Its size info is not trusted (it is lost when the stream changes); the laptop
+  // sends the real screen size instead (rtc_size).
+  final RTCVideoRenderer renderer = RTCVideoRenderer();
   bool _rendererReady = false;
   RTCPeerConnection? _pc;
   MediaStreamTrack? _audioTrack;
@@ -40,9 +43,20 @@ class PreviewController extends ChangeNotifier {
   bool audioOn = false, audioSupported = true;
   int fullscreenUsers = 0; // the full-screen page keeps the stream alive
 
-  int get videoW => renderer.videoWidth;
-  int get videoH => renderer.videoHeight;
+  int _srvW = 0, _srvH = 0; // laptop screen size (rtc_size)
+  int _seenW = 0, _seenH = 0; // last size the renderer reported (older laptops don't send rtc_size)
+  int get videoW => _srvW > 0 ? _srvW : _seen().$1;
+  int get videoH => _srvH > 0 ? _srvH : _seen().$2;
+  (int, int) _seen() {
+    if (renderer.videoWidth > 0 && renderer.videoHeight > 0) {
+      _seenW = renderer.videoWidth;
+      _seenH = renderer.videoHeight;
+    }
+    return (_seenW, _seenH);
+  }
   bool get hasVideo => videoW > 0 && videoH > 0;
+  /// The stream is connected and attached to the renderer (the picture is showing).
+  bool get live => message == null && renderer.renderVideo && hasVideo;
 
   Timer? _linger;
 
@@ -79,6 +93,11 @@ class PreviewController extends ChangeNotifier {
       await (_rendererInit ??= r.initialize());
       if (gen != _gen) return;
       r.onResize = notifyListeners;
+      r.onFirstFrameRendered = () {
+        _framesSeen = true;
+        notifyListeners();
+      };
+      _framesSeen = false;
       _rendererReady = true;
       // play laptop sound like media (speaker / Bluetooth), not like a phone call through the earpiece,
       // and don't steal audio focus from the phone's own music
@@ -117,6 +136,7 @@ class PreviewController extends ChangeNotifier {
         if (st == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
           message = null;
           notifyListeners();
+          _checkPicture(gen);
         } else if (st == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
             st == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
           message = 'Screen connection lost – retrying…';
@@ -170,6 +190,10 @@ class PreviewController extends ChangeNotifier {
           message = 'Screen error: $e';
         }
         notifyListeners();
+      case 'rtc_size':
+        _srvW = (m['w'] as num).toInt();
+        _srvH = (m['h'] as num).toInt();
+        notifyListeners();
       case 'cur':
         cursor = Offset((m['x'] as num).toDouble(), (m['y'] as num).toDouble());
         notifyListeners();
@@ -179,6 +203,33 @@ class PreviewController extends ChangeNotifier {
           _start();
         }
     }
+  }
+
+  bool _framesSeen = false;
+
+  /// Connected but nothing drawn after a few seconds: tell the laptop's log what the renderer looks
+  /// like (to diagnose), and re-attach the stream once, which makes the native side rebuild its surface.
+  void _checkPicture(int gen, {bool retried = false}) {
+    Timer(const Duration(seconds: 5), () {
+      if (gen != _gen || _framesSeen || _disposed) return;
+      conn.send({
+        'diag': 'preview has no picture',
+        't': 'diag',
+        'retried': retried,
+        'texture': renderer.textureId,
+        'renderVideo': renderer.renderVideo,
+        'rendererSize': '${renderer.videoWidth}x${renderer.videoHeight}',
+        'laptopSize': '${_srvW}x$_srvH',
+      });
+      if (retried) return;
+      final s = renderer.srcObject;
+      if (s != null) {
+        renderer.srcObject = null;
+        renderer.srcObject = s;
+        notifyListeners();
+      }
+      _checkPicture(gen, retried: true);
+    });
   }
 
   void _onSettings() {
@@ -203,26 +254,10 @@ class PreviewController extends ChangeNotifier {
     final pc = _pc;
     _pc = null;
     _audioTrack = null;
+    if (_rendererReady) renderer.srcObject = null; // detach before the stream's tracks are closed
     pc?.close();
-    if (_rendererReady) _retireRenderer();
     cursor = null;
     if (!_disposed) notifyListeners();
-  }
-
-  /// A renderer forgets the video size when its stream is replaced and isn't told it again when the
-  /// new stream has the same size, so after switching tabs the picture came back squashed. Every
-  /// stream gets a fresh renderer instead.
-  void _retireRenderer() {
-    final old = renderer;
-    old.onResize = null;
-    renderer = RTCVideoRenderer();
-    _rendererReady = false;
-    _rendererInit = null;
-    // the old view can still be on screen this frame: release it a moment later
-    Timer(const Duration(seconds: 1), () {
-      old.srcObject = null;
-      old.dispose();
-    });
   }
 
   @override
@@ -778,13 +813,20 @@ class _PreviewSurfaceState extends State<PreviewSurface> {
                 transform: Matrix4.identity()
                   ..translateByDouble(_tx, _ty, 0, 1)
                   ..scaleByDouble(_s, _s, 1, 1),
-                // RTCVideoView decides "video or placeholder" only when it is rebuilt itself, not when
-                // the renderer gets its stream: rebuild it on every renderer change, or the picture
-                // could stay black after the stream restarts (e.g. coming back from another tab)
+                // the video texture, drawn directly and shaped by the laptop's screen size (rebuilt on
+                // every renderer change: RTCVideoView only switched placeholder -> video when rebuilt)
                 child: ValueListenableBuilder<RTCVideoValue>(
                   valueListenable: c.renderer,
-                  builder: (_, _, _) => RTCVideoView(c.renderer,
-                      key: ObjectKey(c.renderer), objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain),
+                  builder: (_, _, _) {
+                    final id = c.renderer.textureId;
+                    if (id == null || !c.renderer.renderVideo || !c.hasVideo) return const SizedBox.expand();
+                    return Center(
+                      child: AspectRatio(
+                        aspectRatio: c.videoW / c.videoH,
+                        child: Texture(textureId: id, filterQuality: FilterQuality.medium),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
@@ -813,7 +855,7 @@ class _PreviewSurfaceState extends State<PreviewSurface> {
                 onPointerCancel: (e) => _up(e, cancelled: true),
               ),
             ),
-            if (c.message != null && !c.hasVideo)
+            if (c.message != null && !c.live)
               Center(
                 child: Padding(
                   padding: const EdgeInsets.all(16),

@@ -355,9 +355,16 @@ class FaswayServer:
     async def _cursor_feed(sess: dict, track):
         """Stream the cursor position (as a fraction of the shown monitor) so the phone can highlight it."""
         last = None
+        size = None
         while sess.get("track") is track:
             mon = track.mon
             if mon:
+                if (mon["width"], mon["height"]) != size:   # the phone lays the picture out with this
+                    size = (mon["width"], mon["height"])
+                    try:
+                        await sess["ws"].send_str(json.dumps({"t": "rtc_size", "w": size[0], "h": size[1]}))
+                    except Exception:
+                        return
                 cx, cy = inp.cursor_pos()
                 cur = (round((cx - mon["left"]) / mon["width"], 4), round((cy - mon["top"]) / mon["height"], 4))
                 if cur != last:
