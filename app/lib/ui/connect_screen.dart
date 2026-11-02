@@ -55,7 +55,7 @@ class ConnectScreen extends StatelessWidget {
               ListenableBuilder(
                 listenable: state.discovery,
                 builder: (_, _) {
-                  final found = state.discovery.found.values.toList();
+                  final found = state.discovery.found.values.where((f) => !state.laptops.any((l) => l.id == f.id)).toList();
                   if (found.isEmpty) {
                     return const Text('Looking for Fasway laptops on this Wi-Fi…',
                         textAlign: TextAlign.center, style: TextStyle(color: C.muted, fontSize: 13));

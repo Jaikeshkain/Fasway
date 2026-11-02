@@ -39,12 +39,15 @@ class Connection extends ChangeNotifier {
   Timer? _retryTimer, _watchdog;
   int _retry = 0;
   DateTime _lastSeen = DateTime.now();
-  bool _stopped = false;
+  bool _stopped = false, _closed = false;
 
   bool get isConnected => state == LinkState.connected;
 
+  /// This phone's secret for this laptop.
+  String get _key => laptop.key.isEmpty ? identity.key : laptop.key;
+
   void _set(LinkState s) {
-    if (state == s) return;
+    if (_closed || state == s) return;
     state = s;
     notifyListeners();
   }
@@ -52,9 +55,15 @@ class Connection extends ChangeNotifier {
   void _onDiscovery() {
     // the laptop just showed up on the network: don't wait for the next retry
     if (!isConnected && state != LinkState.connecting && discovery.found.containsKey(laptop.id) &&
-        state != LinkState.declined && state != LinkState.removed) {
+        state != LinkState.waitingApproval && state != LinkState.declined && state != LinkState.removed) {
       reconnectNow();
     }
+  }
+
+  void _learnName(Object? name) {
+    if (name is! String || name.isEmpty || laptop.renamed || name == laptop.name) return;
+    laptop.name = name;
+    onLaptopChanged(laptop);
   }
 
   List<String> _candidates() {
@@ -77,11 +86,12 @@ class Connection extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    if (_closed) return;
     _stopped = false;
     if (state == LinkState.connecting) return;
     _retryTimer?.cancel();
     _set(LinkState.connecting);
-    final q = Uri(queryParameters: {'t': laptop.token, 'd': identity.id, 'k': identity.key, 'n': identity.name}).query;
+    final q = Uri(queryParameters: {'t': laptop.token, 'd': identity.id, 'k': _key, 'n': identity.name}).query;
     var wrongCert = false;
     for (final addr in _candidates()) {
       if (_stopped) return;
@@ -91,6 +101,10 @@ class Connection extends ChangeNotifier {
       try {
         final ws = await WebSocket.connect('wss://$addr:${laptop.port}/ws?$q', customClient: client)
             .timeout(const Duration(seconds: 6));
+        if (_stopped) {
+          ws.close(); // switched to another laptop while this was connecting
+          return;
+        }
         _attach(ws, addr);
         return;
       } on WebSocketException catch (e) {
@@ -109,6 +123,7 @@ class Connection extends ChangeNotifier {
         lastError = '$addr: $e';
       }
     }
+    if (_stopped) return;
     _set(wrongCert ? LinkState.wrongLaptop : LinkState.offline);
     _scheduleRetry();
   }
@@ -126,6 +141,7 @@ class Connection extends ChangeNotifier {
     }
     ws.listen(
       (data) {
+        if (_ws != ws) return; // replaced or closed: its last messages no longer matter
         _lastSeen = DateTime.now();
         if (data is! String) return;
         final Map<String, dynamic> m;
@@ -144,8 +160,9 @@ class Connection extends ChangeNotifier {
             _set(LinkState.waitingApproval);
           case 'hello':
             laptopOs = (m['os'] ?? 'win') as String;
+            _learnName(m['name'] ?? discovery.found[laptop.id]?.name); // older laptops don't send it
             _set(LinkState.connected);
-            _saveNativeLink();
+            saveNativeLink();
         }
         _messages.add(m);
       },
@@ -249,15 +266,18 @@ class Connection extends ChangeNotifier {
 
   /// Tells the Android side how to reach this laptop, for "Copy to laptop" in other apps' text menu
   /// (which runs without the Flutter app). The address that works now goes first.
-  void _saveNativeLink() {
-    if (laptop.fp.isEmpty) return; // only ever talk to a pinned certificate
+  void saveNativeLink() {
+    if (laptop.fp.isEmpty) { // only ever talk to a pinned certificate
+      clearNativeLink();
+      return;
+    }
     final hosts = {?address, ..._candidates()}.toList();
     _link.invokeMethod('save', {
       'hosts': hosts,
       'port': laptop.port,
       'fp': laptop.fp,
       'id': identity.id,
-      'key': identity.key,
+      'key': _key,
     }).catchError((Object _) => null); // tests / non-Android: no native side
   }
 
@@ -281,7 +301,7 @@ class Connection extends ChangeNotifier {
   }
 
   /// Proves to the laptop that a request comes from this trusted phone.
-  Map<String, String> get authHeaders => {'X-Fasway-Device': identity.id, 'X-Fasway-Key': identity.key};
+  Map<String, String> get authHeaders => {'X-Fasway-Device': identity.id, 'X-Fasway-Key': _key};
 
   void disconnect() {
     _stopped = true;
@@ -292,11 +312,18 @@ class Connection extends ChangeNotifier {
     _set(LinkState.offline);
   }
 
-  @override
-  void dispose() {
+  /// Ends this connection for good. The screen of the laptop being left still fades out on it, so
+  /// listeners stay allowed (unlike after [dispose]).
+  void close() {
     discovery.removeListener(_onDiscovery);
     disconnect();
+    _closed = true;
     _messages.close();
+  }
+
+  @override
+  void dispose() {
+    close();
     super.dispose();
   }
 }

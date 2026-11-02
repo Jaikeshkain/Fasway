@@ -83,9 +83,10 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
               ),
               const Divider(height: 28),
               if (l != null) ...[
-                Text('Paired laptop', style: const TextStyle(color: C.muted, fontSize: 14)),
+                Text('Current laptop', style: const TextStyle(color: C.muted, fontSize: 14)),
                 const SizedBox(height: 4),
-                Text('${l.host}:${l.port}', style: const TextStyle(fontSize: 15)),
+                Text(l.name, style: const TextStyle(fontSize: 15)),
+                Text('${l.host}:${l.port}', style: const TextStyle(color: C.muted, fontSize: 12)),
                 Text(
                   'Connected via ${s.connection?.address ?? '—'} · certificate ${l.fp.isEmpty ? 'not pinned yet' : '${l.fp.substring(0, 12)}…'}',
                   style: const TextStyle(color: C.muted, fontSize: 12),
@@ -99,20 +100,22 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
                       Navigator.pop(c);
                       onPairNew();
                     },
-                    child: const Text('Pair another laptop'),
+                    child: const Text('Add a laptop'),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton(
                     style: OutlinedButton.styleFrom(foregroundColor: C.bad),
-                    onPressed: () async {
-                      if (await confirm(c, 'Forget laptop', 'Forget this laptop? You will need to scan its QR code again.',
-                          ok: 'Forget', danger: true)) {
-                        if (c.mounted) Navigator.pop(c);
-                        s.forget();
-                      }
-                    },
+                    onPressed: l == null
+                        ? null
+                        : () async {
+                            if (await confirm(c, 'Forget laptop', 'Forget ${l.name}? You will need to scan its QR code again.',
+                                ok: 'Forget', danger: true)) {
+                              if (c.mounted) Navigator.pop(c);
+                              s.forget(l);
+                            }
+                          },
                     child: const Text('Forget laptop'),
                   ),
                 ),

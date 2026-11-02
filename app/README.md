@@ -5,6 +5,7 @@ Native Flutter app for Fasway: the same features as the web app, plus what a bro
 | Feature | Notes |
 |---|---|
 | Pair by **scanning the QR** in the Fasway window | The app pins the laptop's certificate fingerprint from the QR, so there is no "Not secure" warning and an impostor can't pretend to be your laptop |
+| **Several laptops** in one app | Tap the laptop's name at the top to switch, add, rename or forget. One laptop is controlled at a time; a new laptop gets its own secret key, so one can't log in to another as this phone |
 | **Finds the laptop by itself** on any Wi-Fi | Android network service discovery (`_fasway._tcp`); falls back to the last known IPs, then `fasway-<id>.local` |
 | Touchpad, Keyboard (live typing), Voice (Hindi / English / Hinglish), Apps, Controls | Same messages as the web app (`web/app.js`) |
 | Screen preview with laptop sound | `flutter_webrtc`. Sound plays as media (speaker / Bluetooth). Full screen is real Android immersive landscape |
@@ -39,6 +40,8 @@ flutter test test/connection_test.dart --dart-define=FASWAY_TEST_FP=<fingerprint
 ```
 
 The second command also runs the live tests: pinning, pairing, trusted login, impostor refused and stranger rejected. They run against a Fasway test server on port 18470 that prints its certificate fingerprint.
+
+`test/multi_device_test.dart` covers the saved laptop list and the switcher; its live group needs two test servers (the command is at the top of that file).
 
 ## Layout
 ```

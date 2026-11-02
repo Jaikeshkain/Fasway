@@ -79,7 +79,7 @@ class _FaswayAppState extends State<FaswayApp> {
                   switchInCurve: Motion.curve,
                   child: s.laptop == null
                       ? ConnectScreen(s, key: const ValueKey('connect'))
-                      : HomeScreen(s, key: const ValueKey('home')),
+                      : HomeScreen(s, key: ObjectKey(s.connection)), // a new connection starts a fresh screen
                 ),
               )
             : _Boot(key: ValueKey('boot$_error'), error: _error, onRetry: _load),

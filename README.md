@@ -5,6 +5,8 @@ Use your Android phone as a **touchpad** and **voice keyboard** (English, Hindi 
 ## Android app
 A native Android app lives in [`app/`](app/README.md). It pairs by scanning the QR, finds the laptop on any Wi-Fi by itself, pins the laptop's certificate (no "Not secure" warning), and has real landscape full screen and reliable clipboard copy. The web app below keeps working too.
 
+**Several laptops:** the app remembers every laptop you pair. Tap the laptop's name at the top of the app to switch to another one, **Add a laptop** (scan its QR), rename one, or forget one. One laptop is controlled at a time, and switching takes about a second. **Send clipboard** and **Copy to laptop** go to the laptop you have selected. Switching stops file transfers that are still running (the app asks first).
+
 ## Start
 
 **Windows:** double-click **`run.bat`**. The first run installs dependencies into `.venv`. Fasway then runs **in the system tray** (the blue **F** icon next to the clock), with no console window.

@@ -29,6 +29,9 @@ class Identity {
     return base64Url.encode(b).replaceAll('=', '');
   }
 
+  /// A fresh secret key (one per paired laptop).
+  static String newKey() => _random(32);
+
   static Future<Identity> load(SharedPreferences prefs) async {
     String? id, key;
     var secureOk = prefs.getBool('identity_in_prefs') != true;

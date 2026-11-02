@@ -23,6 +23,13 @@ class Laptop {
 
   String name;
 
+  /// The user picked the name: the laptop's own computer name no longer replaces it.
+  bool renamed;
+
+  /// This phone's key for this laptop, so one laptop never learns what logs in to another.
+  /// Empty for a laptop paired before Fasway kept several: it stays trusted with the phone's old key.
+  String key;
+
   Laptop({
     required this.id,
     required this.host,
@@ -31,6 +38,8 @@ class Laptop {
     this.fp = '',
     List<String>? ips,
     String? name,
+    this.renamed = false,
+    this.key = '',
   })  : ips = ips ?? [],
         name = name ?? 'Laptop';
 
@@ -59,7 +68,7 @@ class Laptop {
   }
 
   Map<String, dynamic> toJson() =>
-      {'id': id, 'host': host, 'port': port, 'token': token, 'fp': fp, 'ips': ips, 'name': name};
+      {'id': id, 'host': host, 'port': port, 'token': token, 'fp': fp, 'ips': ips, 'name': name, 'renamed': renamed, 'key': key};
 
   static Laptop fromJson(Map<String, dynamic> j) => Laptop(
         id: j['id'] as String,
@@ -69,6 +78,8 @@ class Laptop {
         fp: (j['fp'] ?? '') as String,
         ips: List<String>.from(j['ips'] ?? const []),
         name: j['name'] as String?,
+        renamed: (j['renamed'] ?? false) as bool,
+        key: (j['key'] ?? '') as String,
       );
 
   String encode() => jsonEncode(toJson());

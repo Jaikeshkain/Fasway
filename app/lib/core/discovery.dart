@@ -34,8 +34,8 @@ class Discovery extends ChangeNotifier {
             final s = event.service;
             if (s != null) _add(s);
           case BonsoirDiscoveryServiceLostEvent():
-            final s = event.service;
-            found.removeWhere((_, f) => s.name.endsWith(f.name));
+            final label = _label(event.service);
+            found.removeWhere((_, f) => f.name == label);
             notifyListeners();
           default:
         }
@@ -47,6 +47,8 @@ class Discovery extends ChangeNotifier {
     }
   }
 
+  static String _label(BonsoirService s) => s.name.replaceFirst(RegExp(r'^Fasway on '), '');
+
   void _add(BonsoirService s) {
     final id = s.attributes['id'] ?? '';
     if (id.isEmpty) return;
@@ -54,8 +56,7 @@ class Discovery extends ChangeNotifier {
     final ip = s.hostAddresses.firstWhere((a) => RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(a),
         orElse: () => s.hostAddresses.isNotEmpty ? s.hostAddresses.first : '');
     if (ip.isEmpty) return;
-    final label = s.name.replaceFirst(RegExp(r'^Fasway on '), '');
-    found[id] = FoundLaptop(id, label, ip, s.port);
+    found[id] = FoundLaptop(id, _label(s), ip, s.port);
     notifyListeners();
   }
 

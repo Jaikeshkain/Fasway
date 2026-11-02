@@ -9,11 +9,14 @@ import 'connect_screen.dart';
 import 'controls_tab.dart';
 import 'files_tab.dart';
 import 'keyboard_tab.dart';
+import 'laptops_sheet.dart';
 import 'screen_preview.dart';
 import 'settings_sheet.dart';
 import 'touchpad_tab.dart';
 import 'voice_tab.dart';
 
+/// Everything for one connection to one laptop. Switching laptops builds a new one (see main.dart);
+/// the old one still shows while it fades out, on its closed connection.
 class HomeScreen extends StatefulWidget {
   const HomeScreen(this.state, {super.key});
   final AppState state;
@@ -22,7 +25,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  int _tab = 0;
+  late final Connection conn;
   late PreviewController _preview;
   late FileTransfers _files;
   LinkState? _lastState;
@@ -31,11 +34,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _resumed = true;
 
   AppState get s => widget.state;
-  Connection get conn => s.connection!;
+  int get _tab => s.tab;
+  set _tab(int i) => s.tab = i;
 
   @override
   void initState() {
     super.initState();
+    conn = s.connection!;
     WidgetsBinding.instance.addObserver(this);
     _preview = PreviewController(conn, s.settings);
     _files = _newFiles();
@@ -49,23 +54,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   @override
-  void didUpdateWidget(HomeScreen old) {
-    super.didUpdateWidget(old);
-    if (old.state.connection != s.connection) {
-      // re-paired with another laptop
-      old.state.connection?.removeListener(_sync);
-      _preview.dispose();
-      _preview = PreviewController(conn, s.settings);
-      _files.dispose();
-      _files = _newFiles();
-      conn.addListener(_sync);
-    }
-  }
-
-  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    s.connection?.removeListener(_sync);
+    conn.removeListener(_sync);
     s.settings.removeListener(_sync);
     _preview.dispose();
     _files.dispose();
@@ -85,6 +76,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) toast(context, text);
     }
     ..onFinished = (t) => t.state == TransferState.done ? Fx.success() : Fx.heavy();
+
+  /// Leaving this laptop ends its file transfers: ask first.
+  Future<bool> _canLeave() async {
+    final n = _files.active.length;
+    return n == 0 ||
+        await confirm(context, 'Stop file transfers?',
+            'Switching laptops stops ${n == 1 ? 'the transfer' : 'the $n transfers'} still running on ${conn.laptop.name}.',
+            ok: 'Switch', danger: true);
+  }
+
+  Future<void> _addLaptop() async {
+    Fx.tap();
+    if (!await _canLeave() || !mounted) return;
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ConnectScreen(s, canGoBack: true)));
+  }
 
   /// The screen preview runs only while it is switched on, visible and connected (saves battery).
   void _sync() {
@@ -124,7 +130,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         backgroundColor: C.bg,
         titleSpacing: 16,
-        title: const Text('Fasway', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: Pressable(
+          onTap: () => showLaptops(context, s, canLeave: _canLeave, onAdd: _addLaptop),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Flexible(
+              child: Text(conn.laptop.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  semanticsLabel: 'Laptop: ${conn.laptop.name}. Tap to switch',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            const Icon(Icons.expand_more_rounded, color: C.muted),
+          ]),
+        ),
         actions: [
           _StatusChip(conn),
           IconButton(
@@ -147,10 +165,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           IconButton(
             tooltip: 'Settings',
             icon: const Icon(Icons.settings_rounded),
-            onPressed: () => showSettings(context, s, onPairNew: () {
-              Fx.tap();
-              Navigator.push(context, MaterialPageRoute(builder: (_) => ConnectScreen(s, canGoBack: true)));
-            }),
+            onPressed: () => showSettings(context, s, onPairNew: _addLaptop),
           ),
         ],
       ),
@@ -163,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: _TabStack(index: _tab, children: tabs),
             ),
             Positioned.fill(
-              child: AnimatedSwitcher(duration: Motion.medium, child: _PairingOverlay(s, key: ValueKey(conn.state))),
+              child: AnimatedSwitcher(duration: Motion.medium, child: _PairingOverlay(s, conn, key: ValueKey(conn.state))),
             ),
           ]),
         ),
@@ -209,15 +224,7 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (color, text) = switch (conn.state) {
-      LinkState.connected => conn.weak ? (C.warn, 'Weak Wi-Fi') : (C.ok, 'Connected'),
-      LinkState.connecting => (C.warn, 'Connecting…'),
-      LinkState.waitingApproval => (C.warn, 'Waiting for approval'),
-      LinkState.declined => (C.bad, 'Not allowed'),
-      LinkState.removed => (C.bad, 'Removed'),
-      LinkState.wrongLaptop => (C.bad, 'Wrong laptop'),
-      LinkState.offline => (C.bad, 'Offline'),
-    };
+    final (color, text) = linkStatus(conn);
     final busy = conn.state == LinkState.connecting || conn.state == LinkState.waitingApproval;
     return Pressable(
       onTap: conn.isConnected ? null : conn.reconnectNow,
@@ -385,12 +392,12 @@ class _TabStackState extends State<_TabStack> with SingleTickerProviderStateMixi
 }
 /// Full-screen messages for pairing: waiting for approval, declined, removed, wrong laptop.
 class _PairingOverlay extends StatelessWidget {
-  const _PairingOverlay(this.s, {super.key});
+  const _PairingOverlay(this.s, this.conn, {super.key});
   final AppState s;
+  final Connection conn;
 
   @override
   Widget build(BuildContext context) {
-    final conn = s.connection!;
     final info = switch (conn.state) {
       LinkState.waitingApproval => (
           '💻',

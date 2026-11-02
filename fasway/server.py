@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import json
 import logging
+import socket
 import ssl
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -231,7 +232,8 @@ class FaswayServer:
         sock = request.transport.get_extra_info("sockname") if request.transport else None
         if sock:
             self.on_local_ip(sock[0])
-        await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win"}))
+        await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win",
+                                      "name": socket.gethostname()}))   # the app's laptop list shows it
         if self._clip_task is None:
             self._clip_task = asyncio.create_task(self._watch_clipboard())
             self._status_task = asyncio.create_task(self._watch_battery())

@@ -233,6 +233,10 @@ class FileTransfers extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    for (final t in active) { // the list is going away (switched laptop): nothing runs unseen
+      t.cancelled = true;
+      t._client?.close(force: true);
+    }
     _sub.cancel();
     super.dispose();
   }
