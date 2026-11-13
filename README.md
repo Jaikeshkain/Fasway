@@ -7,6 +7,21 @@ A native Android app lives in [`app/`](app/README.md). It pairs by scanning the 
 
 **Several laptops:** the app remembers every laptop you pair. Tap the laptop's name at the top of the app to switch to another one, **Add a laptop** (scan its QR), rename one, or forget one. One laptop is controlled at a time, and switching takes about a second. **Send clipboard** and **Copy to laptop** go to the laptop you have selected. Switching stops file transfers that are still running (the app asks first).
 
+## Assistant
+Tap **✨** in the Android app and say or type what you want, in English, हिंदी or Hinglish.
+- **Built-in commands** ("volume 30", "agla gaana", "YouTube kholo", "laptop lock karo") run instantly on the laptop, with no internet, no key and no cost.
+- **Everyday sentences without a key** ("can you turn the sound down a bit", "volume 30 aur YouTube kholo", "search cats on YouTube", "battery kitni hai") work from the words that matter. This covers volume, brightness, music, power, opening apps and sites, search and simple typing. If it isn't sure, it does nothing and says so.
+- **Everything else** goes to the AI model you choose, once you add an Anthropic (Claude) or OpenAI (GPT) API key with **AI API key** in the Fasway window on the laptop. Keys are kept in the system's credential store (Windows Credential Manager / macOS Keychain) and never go to the phone. You pay that company directly for what you use.
+- **Model:** choose **Opus 5.5** (smartest), **Haiku 5.5** (fastest and cheapest), **GPT-6 Luna** (fast and cheap) or **GPT-6 Sol** (stronger) on the assistant screen. Each needs its own company's key. With Opus, a request its safety checks decline is automatically retried on Anthropic's fallback model.
+- **Spending limits:** ₹30 per task and ₹150 per day by default; change them in the ⋮ menu. The rupee figures use a fixed rate and our own estimate from token counts, so check your Anthropic console for the exact bill.
+
+**What it can't do, whatever it's asked:** run terminal commands, open terminals or script files, delete files, or read your clipboard.
+**What it asks you first:** shutting down, restarting, sleeping or signing out; closing a window; unusual shortcuts; quick actions that run a command; typing into a terminal or a window that looks like a sign-in or payment page. No answer in 2 minutes counts as no, and **STOP** ends a task at once.
+
+These limits are enforced by Fasway's code, not by the AI. They can't catch everything: the AI can still type into ordinary windows and open links on its own, so watch what it does on sensitive tasks. Requests sent to the AI include your words, the active window's title and what its tools read (such as the list of open windows). A log of every action is in `data/fasway.log`.
+
+Tests: `python -m unittest tests.test_agent` (uses a fake laptop and scripted AI replies, so it spends nothing).
+
 ## Start
 
 **Windows:** double-click **`run.bat`**. The first run installs dependencies into `.venv`. Fasway then runs **in the system tray** (the blue **F** icon next to the clock), with no console window.

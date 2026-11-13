@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
 import 'common.dart';
+import 'whats_new.dart';
 
 /// Touchpad speed, scrolling, screen quality, haptics, and the paired laptop.
 void showSettings(BuildContext context, AppState s, {required VoidCallback onPairNew}) {
@@ -122,7 +123,18 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
               ]),
               const SizedBox(height: 8),
               Text('This phone: ${s.identity.name}', style: const TextStyle(color: C.muted, fontSize: 12)),
-              const Text('Fasway v$appVersion (build $appBuild)', style: TextStyle(color: C.muted, fontSize: 12)),
+              Row(children: [
+                const Expanded(
+                    child: Text('Fasway v$appVersion (build $appBuild)', style: TextStyle(color: C.muted, fontSize: 12))),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(c);
+                    showWhatsNew(context);
+                  },
+                  icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+                  label: const Text('What\'s new'),
+                ),
+              ]),
             ]),
           ),
         );

@@ -288,6 +288,11 @@ class Connection extends ChangeNotifier {
   static void clipNotification(bool show, String laptop) =>
       _link.invokeMethod(show ? 'notify' : 'unnotify', {'laptop': laptop}).catchError((Object _) => null);
 
+  /// Assistant approvals while Fasway is in the background (see AgentNotification.kt).
+  static void agentPermission() => _link.invokeMethod('agentPermission').catchError((Object _) => null);
+  static void agentNotification(String? text) => _link
+      .invokeMethod(text != null ? 'agentNotify' : 'agentUnnotify', {'text': text}).catchError((Object _) => null);
+
   /// HTTPS to the connected laptop (file transfers): same pinned certificate as the websocket.
   HttpClient httpClient() => HttpClient()
     ..connectionTimeout = const Duration(seconds: 6)

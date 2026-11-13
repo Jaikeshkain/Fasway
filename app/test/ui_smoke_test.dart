@@ -65,6 +65,63 @@ void main() {
       expect(ex, isNull, reason: 'tab $tab');
     }
 
+    // the assistant, with the laptop screen switched on inside it, then back
+    await tester.tap(find.byTooltip('Assistant'));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    expect(find.text('Assistant'), findsWidgets);
+    await tester.tap(find.byTooltip('Laptop screen').last);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    final assistantError = tester.takeException();
+    if (assistantError is FlutterError) debugPrint(assistantError.toStringDeep());
+    expect(assistantError, isNull, reason: 'assistant with screen');
+
+    // the small touchpad opens under the laptop screen, works, and folds away again
+    await tester.tap(find.byTooltip('Show touchpad'));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    final smallPad = find.textContaining('1 finger: move');
+    expect(smallPad, findsOneWidget);
+    final drag = await tester.startGesture(tester.getCenter(smallPad));
+    await tester.pump(const Duration(milliseconds: 30));
+    await drag.moveBy(const Offset(40, 10));
+    await tester.pump(const Duration(milliseconds: 30));
+    await drag.up();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    expect(find.text('Left'), findsOneWidget);
+    final padError = tester.takeException();
+    if (padError is FlutterError) debugPrint(padError.toStringDeep());
+    expect(padError, isNull, reason: 'touchpad under the screen');
+    await tester.tap(find.byTooltip('Hide touchpad'));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    expect(smallPad, findsNothing);
+
+    await tester.tap(find.byTooltip('Laptop screen').last); // back off, as the rest of this test expects
+    await tester.pageBack();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    // the floating assistant: its bar opens over this tab, then closes
+    await tester.tap(find.byTooltip('Ask the assistant'));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    expect(find.textContaining('ask anything about your laptop'), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: 'assistant bar');
+    await tester.tap(find.byTooltip('Close'));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
     // Files tab content
     await tester.tap(find.text('Files'));
     await tester.pump(const Duration(milliseconds: 400));
@@ -82,6 +139,10 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox()); // dispose everything (timers, tickers)
-    await tester.pump(const Duration(seconds: 2));
+    // a reconnect attempt to the unreachable laptop may have just started: let its timeouts run out
+    for (var i = 0; i < 4; i++) {
+      await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 50)));
+      await tester.pump(const Duration(seconds: 2));
+    }
   });
 }

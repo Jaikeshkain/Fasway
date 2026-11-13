@@ -5,6 +5,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import '../core/connection.dart';
 import '../core/settings.dart';
+import 'ai_effects.dart';
 import 'common.dart';
 
 /// Voice typing with Android's own speech recognizer (works in the background of the app, keeps
@@ -67,6 +68,9 @@ class _VoiceTabState extends State<VoiceTab> {
   Future<void> _listen() async {
     if (!_listening || !mounted) return;
     setState(() => _status = 'Listening… tap to stop');
+    _stt // the recognizer is shared with the assistant screen: take it back
+      ..statusListener = _onStatus
+      ..errorListener = _onError;
     await _stt.listen(
       onResult: _onResult,
       listenOptions: SpeechListenOptions(
@@ -261,7 +265,8 @@ class _MicButtonState extends State<_MicButton> with SingleTickerProviderStateMi
                     height: 96 + 54 * v,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: C.bad.withValues(alpha: 0.55 * (1 - v)), width: 2),
+                      border: Border.all(
+                          color: Color.lerp(Ai.pink, Ai.blue, v)!.withValues(alpha: 0.6 * (1 - v)), width: 2),
                     ),
                   );
                 }),
@@ -271,11 +276,20 @@ class _MicButtonState extends State<_MicButton> with SingleTickerProviderStateMi
               width: 96,
               height: 96,
               decoration: BoxDecoration(
-                color: widget.listening ? C.bad : C.panel2,
+                // the assistant's colours: turning while it listens
+                gradient: widget.listening
+                    ? SweepGradient(
+                        colors: const [Ai.pink, Ai.violet, Ai.blue, Ai.pink], transform: GradientRotation(_c.value * 6.283))
+                    : const LinearGradient(
+                        begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF2A2F3E), Color(0xFF1B1E27)]),
+                border: Border.all(color: widget.listening ? Colors.transparent : Ai.violet.withValues(alpha: 0.35)),
                 shape: BoxShape.circle,
-                boxShadow: widget.listening
-                    ? [BoxShadow(color: C.bad.withValues(alpha: 0.45), blurRadius: 22, spreadRadius: 2)]
-                    : null,
+                boxShadow: [
+                  BoxShadow(
+                      color: (widget.listening ? Ai.pink : Ai.violet).withValues(alpha: widget.listening ? 0.5 : 0.18),
+                      blurRadius: widget.listening ? 26 : 16,
+                      spreadRadius: 2),
+                ],
               ),
               child: AnimatedSwitcher(
                 duration: Motion.medium,

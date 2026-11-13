@@ -23,6 +23,10 @@ if exist dist\Fasway rmdir /s /q dist\Fasway
   --hidden-import pystray._win32 ^
   --collect-submodules zeroconf ^
   --collect-submodules winrt ^
+  --collect-submodules anthropic ^
+  --collect-submodules openai ^
+  --collect-submodules keyring ^
+  --copy-metadata keyring ^
   --paths "%CD%" ^
   --distpath dist --workpath packaging\build\pyi --specpath packaging\build ^
   packaging\fasway_app.py || goto :err

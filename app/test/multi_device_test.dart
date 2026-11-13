@@ -151,8 +151,9 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Office Mac'), findsOneWidget);
     expect(find.text('Home PC'), findsNothing);
-    final nav = tester.widget<NavigationBar>(find.byType(NavigationBar).first);
-    expect(nav.selectedIndex, 1);
+    // the selected tab's label is the bold one in the tab bar
+    expect(tester.widget<Text>(find.text('Keyboard')).style!.fontWeight, FontWeight.w700);
+    expect(tester.widget<Text>(find.text('Touchpad')).style!.fontWeight, FontWeight.w500);
 
     // rename
     await tester.tap(find.text('Office Mac'));

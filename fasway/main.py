@@ -20,8 +20,11 @@ import qrcode
 from PIL import ImageTk
 
 from . import autostart
+from .agent import keystore
+from .agent.llm import PROVIDER_NAMES, check_key
 from .certs import cert_fingerprint, ensure_cert
 from . import shellmenu, ui
+from .sendto import CONTROL_PORT, send_args, signal_running_instance
 from .version import __version__
 from .discovery import Announcer, new_device_id
 from .files import open_folder
@@ -41,8 +44,6 @@ def _data_dir() -> Path:
 DATA = _data_dir()
 CONFIG = DATA / "config.json"
 DEFAULT_PORT = 8443
-# localhost only: keeps Fasway single-instance and lets a 2nd launch open the window (env override for tests)
-CONTROL_PORT = int(os.environ.get("FASWAY_CONTROL_PORT", "47391"))
 
 log = logging.getLogger("fasway")
 
@@ -147,22 +148,6 @@ def acquire_instance(takeover: bool) -> socket.socket | None:
             time.sleep(0.3)
 
 
-def signal_running_instance(msg: bytes = b"show\n") -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", CONTROL_PORT), timeout=2) as c:
-            c.sendall(msg)
-        return True
-    except OSError:
-        return False
-
-
-def send_args() -> list[str]:
-    """Paths after --send (Explorer's "Send to phone (Fasway)")."""
-    if "--send" not in sys.argv:
-        return []
-    return [a for a in sys.argv[sys.argv.index("--send") + 1:] if not a.startswith("--")]
-
-
 class App:
     def __init__(self, background: bool, lock: socket.socket, pending_send: list | None = None):
         self.cfg = load_config()
@@ -245,6 +230,7 @@ class App:
                 self.events.put(("show", None))
             elif data.startswith(b"send\n"):
                 paths = [p for p in data[5:].decode("utf-8", "replace").split("\n") if p.strip()]
+                log.info("right-click send: %s", ", ".join(Path(p).name for p in paths))
                 self.events.put(("send_menu", paths))
 
     def _announce(self):
@@ -372,6 +358,12 @@ class App:
         # ---- right: settings ----
         sets = ui.Card(right, "Settings")
         sets.pack(fill="x", pady=(px(12), 0))
+        row = tk.Frame(sets, bg=ui.PANEL)
+        row.pack(fill="x", pady=(0, px(6)))
+        self.ai_var = tk.StringVar(value=self._ai_status())
+        tk.Label(row, textvariable=self.ai_var, font=(ui.FONT, 9), fg=ui.MUTED, bg=ui.PANEL, anchor="w", justify="left",
+                 wraplength=px(230)).pack(side="left", fill="x", expand=True)
+        ui.Button(row, "AI API key", self._ask_api_key, small=True).pack(side="right")
         self.autostart_toggle = ui.setting_row(
             sets, "Start with Windows" if sys.platform == "win32" else "Start at login",
             "Runs quietly in the tray" if sys.platform == "win32" else "Runs in the menu bar",
@@ -610,6 +602,82 @@ class App:
         if self.server.loop:
             asyncio.run_coroutine_threadsafe(self.server.remove_device(d["id"]), self.server.loop)
 
+    # ---- AI agent key: entered here only, never on or sent to a phone ----
+    def _ai_status(self) -> str:
+        return ("AI on: use it from the ✨ button on your phone" if keystore.has_key()
+                else "Assistant: simple commands work. Add a key for AI.")
+
+    def _ai_key_changed(self, note: str | None = None):
+        self.ai_var.set(note or self._ai_status())
+        if self.server.loop:   # phones show whether the AI is available
+            asyncio.run_coroutine_threadsafe(self.server._broadcast(self.server.agent.settings_msg()), self.server.loop)
+
+    def _ask_api_key(self):
+        k = self.k
+        win = tk.Toplevel(self.root)
+        win.title("Fasway – AI API key")
+        win.configure(bg=ui.PANEL)
+        win.resizable(False, False)
+        ui.dark_title_bar(win)
+        tk.Label(win, text="AI API key", font=(ui.FONT, 12, "bold"), fg=ui.TEXT,
+                 bg=ui.PANEL).pack(padx=int(24 * k), pady=(int(18 * k), int(4 * k)))
+        tk.Label(win, text="Paste a key from console.anthropic.com (Claude) or platform.openai.com (GPT). It's "
+                           "stored in this computer's credential manager and is never sent to your phone.",
+                 font=(ui.FONT, 9), fg=ui.MUTED, bg=ui.PANEL, wraplength=int(340 * k), justify="left").pack(padx=int(24 * k))
+
+        def remove(provider: str):
+            keystore.delete_key(provider)
+            win.destroy()
+            self._ai_key_changed()
+
+        for provider in keystore.PROVIDERS:
+            current = keystore.get_key(provider)
+            if current:
+                row = tk.Frame(win, bg=ui.PANEL)
+                row.pack(fill="x", padx=int(24 * k), pady=(int(8 * k), 0))
+                tk.Label(row, text=f"{PROVIDER_NAMES[provider]}: {keystore.mask(current)}", font=(ui.MONO, 9), fg=ui.OK,
+                         bg=ui.PANEL).pack(side="left")
+                ui.Button(row, "Remove", lambda p=provider: remove(p), small=True).pack(side="right")
+        entry = tk.Entry(win, show="•", font=(ui.MONO, 10), width=40, bg=ui.BG, fg=ui.TEXT, insertbackground=ui.TEXT,
+                         relief="flat")
+        entry.pack(padx=int(24 * k), pady=(int(12 * k), int(4 * k)), ipady=int(5 * k))
+        entry.focus_set()
+
+        def save():
+            key = entry.get().strip()
+            if not key or any(c.isspace() for c in key):
+                return
+            win.destroy()
+            self._save_api_key(key)
+
+        b = tk.Frame(win, bg=ui.PANEL)
+        b.pack(pady=(int(10 * k), int(18 * k)))
+        ui.Button(b, "Cancel", win.destroy).pack(side="left", padx=int(6 * k))
+        ui.Button(b, "Save", save, kind="primary").pack(side="left", padx=int(6 * k))
+        win.bind("<Return>", lambda e: save())
+        win.bind("<Escape>", lambda e: win.destroy())
+
+    def _save_api_key(self, key: str):
+        provider = keystore.provider_of(key)
+        previous = keystore.get_key(provider)
+        if not keystore.set_key(key, provider):
+            self.ai_var.set("Couldn't store the key on this computer")
+            return
+        self.ai_var.set("Checking the API key…")
+        if not self.server.loop:
+            return self._ai_key_changed()
+
+        def checked(fut):
+            try:
+                ok, note = fut.result()
+            except Exception:
+                ok, note = None, "API key saved, but couldn't check it"
+            if ok is False:   # put back whatever worked before
+                keystore.set_key(previous, provider) if previous else keystore.delete_key(provider)
+            self.events.put(("ai_key", note))
+
+        asyncio.run_coroutine_threadsafe(check_key(key, provider), self.server.loop).add_done_callback(checked)
+
     def _ask_pair(self, name: str, ip: str, answer):
         """'Allow this phone?' - shown even when the main window is hidden in the tray."""
         win = tk.Toplevel(self.root)
@@ -685,6 +753,8 @@ class App:
                     self._render_phones()
                 elif kind == "devices":
                     self._render_phones()
+                elif kind == "ai_key":
+                    self._ai_key_changed(val)
                 elif kind == "pair":
                     self._ask_pair(*val)
                 elif kind == "status":

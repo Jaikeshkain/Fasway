@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../core/connection.dart';
 import '../core/settings.dart';
+import 'ai_effects.dart';
 import 'common.dart';
 import 'screen_preview.dart';
 
@@ -20,24 +21,63 @@ class TouchpadTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(children: [
-        ScreenPreview(controller: preview, settings: settings, allowLarge: true),
+        // this tab is the big touchpad already: no small one under the screen
+        ScreenPreview(controller: preview, settings: settings, allowLarge: true, showPad: false),
         Expanded(child: Touchpad(conn: conn, settings: settings)),
         const SizedBox(height: 8),
-        Row(children: [
-          for (final b in ['left', 'middle', 'right'])
-            KeyButton(
-              label: b == 'middle' ? '●' : '${b[0].toUpperCase()}${b.substring(1)}',
-              flex: b == 'middle' ? 1 : 3,
-              height: 60,
-              fontSize: 16,
-              onPress: () {
-                haptic(settings.haptics);
-                conn.send({'t': 'b', 'b': b, 'a': 'down'});
-              },
-              onRelease: () => conn.send({'t': 'b', 'b': b, 'a': 'up'}),
-            ),
-        ]),
+        ClickButtons(conn: conn, settings: settings, height: 60, middle: true),
       ]);
+}
+
+/// Hold-able Left / (middle) / Right mouse buttons.
+class ClickButtons extends StatelessWidget {
+  const ClickButtons({super.key, required this.conn, required this.settings, this.height = 44, this.middle = false});
+  final Connection conn;
+  final Settings settings;
+  final double height;
+  final bool middle;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        for (final b in middle ? ['left', 'middle', 'right'] : ['left', 'right'])
+          KeyButton(
+            label: b == 'middle' ? '●' : '${b[0].toUpperCase()}${b.substring(1)}',
+            flex: b == 'middle' ? 1 : 3,
+            height: height,
+            fontSize: height >= 56 ? 16 : 14,
+            onPress: () {
+              haptic(settings.haptics);
+              conn.send({'t': 'b', 'b': b, 'a': 'down'});
+            },
+            onRelease: () => conn.send({'t': 'b', 'b': b, 'a': 'up'}),
+          ),
+      ]);
+}
+
+/// A smaller touchpad that opens under the laptop screen on any page that shows it (Keyboard tab,
+/// assistant, Live, full screen), so the mouse is always at hand while watching the laptop.
+class MiniTouchpad extends StatelessWidget {
+  const MiniTouchpad({super.key, required this.conn, required this.settings, required this.height});
+  final Connection conn;
+  final Settings settings;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: height,
+        child: Column(children: [
+          Expanded(
+            // claims the drag, so moving the cursor never scrolls the page it sits on (Keyboard tab)
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (_) {},
+              child: Touchpad(conn: conn, settings: settings),
+            ),
+          ),
+          const SizedBox(height: 4),
+          ClickButtons(conn: conn, settings: settings, height: 40),
+        ]),
+      );
 }
 
 class Touchpad extends StatefulWidget {
@@ -211,11 +251,24 @@ class _TouchpadState extends State<Touchpad> with SingleTickerProviderStateMixin
           duration: Motion.medium,
           curve: Motion.curve,
           width: double.infinity,
+          height: double.infinity,
           decoration: BoxDecoration(
-            color: _fingers.isEmpty ? C.panel : const Color(0xFF1E222B),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _dragging ? C.accent : const Color(0xFF2A2F3A), width: _dragging ? 2 : 1),
-            boxShadow: _dragging ? [BoxShadow(color: C.accent.withValues(alpha: 0.25), blurRadius: 18)] : null,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: _fingers.isEmpty
+                  ? const [Color(0xFF1B1F2B), Color(0xFF14171F)]
+                  : const [Color(0xFF212639), Color(0xFF181B26)],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+                color: _dragging ? Ai.violet : (_fingers.isEmpty ? const Color(0xFF2A2F3A) : Ai.blue.withValues(alpha: 0.45)),
+                width: _dragging ? 2 : 1),
+            boxShadow: [
+              BoxShadow(
+                  color: (_dragging ? Ai.violet : Ai.blue).withValues(alpha: _fingers.isEmpty ? 0.06 : 0.25),
+                  blurRadius: 20),
+            ],
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
@@ -251,6 +304,20 @@ class _PadPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // a faint dot grid, like a trackpad's texture; dots near a finger light up
+    const step = 22.0;
+    final dot = Paint();
+    for (var y = step / 2; y < size.height; y += step) {
+      for (var x = step / 2; x < size.width; x += step) {
+        final p = Offset(x, y);
+        var light = 0.0;
+        for (final f in fingers) {
+          light = max(light, 1 - ((p - f).distance / 110).clamp(0.0, 1.0));
+        }
+        dot.color = Color.lerp(const Color(0x1AFFFFFF), Ai.violet, light)!.withValues(alpha: 0.10 + 0.6 * light);
+        canvas.drawCircle(p, 1.1 + 1.2 * light, dot);
+      }
+    }
     for (final p in fingers) {
       const r = 44.0;
       canvas.drawCircle(

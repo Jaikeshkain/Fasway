@@ -23,9 +23,10 @@ def command() -> str:
     prog, _args, _cwd = autostart.launch_command()
     if getattr(sys, "frozen", False):
         return f'{_quote(prog)} --send "%1"'
-    # running from source: Explorer starts us in the file's folder, so put the project on the path
+    # running from source: Explorer starts us in the file's folder, so put the project on the path.
+    # sendto, not main: it hands the paths over without loading the whole app
     root = str(autostart.ROOT).replace("'", "\\'")
-    code = f"import sys;sys.path.insert(0,r'{root}');from fasway.main import main;main()"
+    code = f"import sys;sys.path.insert(0,r'{root}');from fasway.sendto import main;main()"
     return f'{_quote(prog)} -c "{code}" --send "%1"'
 
 

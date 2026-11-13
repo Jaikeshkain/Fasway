@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../core/agent.dart';
 import '../core/app_state.dart';
 import '../core/connection.dart';
 import '../core/files.dart';
+import 'agent_screen.dart';
+import 'ai_effects.dart';
+import 'floating_assistant.dart';
+import 'whats_new.dart';
 import 'apps_tab.dart';
 import 'common.dart';
 import 'connect_screen.dart';
@@ -28,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final Connection conn;
   late PreviewController _preview;
   late FileTransfers _files;
+  late AgentController _agent;
+  bool _agentOpen = false;
   LinkState? _lastState;
   bool _wasWeak = false;
   String? _notified; // laptop shown in the "Send clipboard" notification
@@ -44,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _preview = PreviewController(conn, s.settings);
     _files = _newFiles();
+    _agent = _newAgent();
     conn.addListener(_sync);
     s.settings.addListener(_sync);
     conn.messages.listen((m) {
@@ -51,6 +59,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (m['t'] == 'alert' || m['t'] == 'toast') toast(context, '${m['msg']}', ms: m['t'] == 'alert' ? 5000 : 1800);
     });
     _sync();
+    // once after each update: show what's new, so new features get found (not in dev builds and tests)
+    if (appVersion != 'dev' && s.settings.whatsNewSeen != appVersion) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        s.settings.set('whatsNewSeen', appVersion);
+        showWhatsNew(
+          context,
+          onAssistant: _openAgent,
+          onLive: () => _openAgent(live: true),
+          onScreen: () {
+            s.settings.set('screenOn', true);
+            setState(() => _tab = 1); // the Keyboard tab: the screen, with room for its touchpad below
+            _sync();
+          },
+        );
+      });
+    }
   }
 
   @override
@@ -60,6 +85,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     s.settings.removeListener(_sync);
     _preview.dispose();
     _files.dispose();
+    _agent.dispose();
+    Connection.agentNotification(null); // an approval from the laptop we just left can't be answered
     super.dispose();
   }
 
@@ -92,6 +119,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Navigator.push(context, MaterialPageRoute(builder: (_) => ConnectScreen(s, canGoBack: true)));
   }
 
+  AgentController _newAgent() {
+    final c = conn;
+    final agent = AgentController(
+        messages: c.messages, send: c.send, connected: () => c.isConnected, link: c, deviceId: c.identity.id);
+    agent.onApprovalChanged = (a) {
+      if (a == null) {
+        Connection.agentNotification(null);
+        return;
+      }
+      Fx.heavy();
+      // another app is on screen: the card on the assistant screen can't be seen from there
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) Connection.agentNotification(a.action);
+    };
+    agent.addListener(() {
+      if (mounted) setState(() {}); // the badge on the assistant button
+    });
+    return agent;
+  }
+
+  Widget _filesIcon() => ListenableBuilder(
+        listenable: _files,
+        builder: (_, _) {
+          final n = _files.active.length;
+          return Badge(isLabelVisible: n > 0, label: Text('$n'), child: const Icon(Icons.swap_vert_rounded));
+        },
+      );
+
+  Future<void> _openAgent({bool live = false}) async {
+    Fx.tap();
+    _agentOpen = true; // the assistant shows the laptop screen too
+    _sync();
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => AgentScreen(agent: _agent, settings: s.settings, preview: _preview, startLive: live)));
+    _agentOpen = false;
+    _sync();
+  }
+
+  /// The floating bubble: the assistant's voice bar over whatever tab is showing.
+  void _openAssistantBar() {
+    Fx.tap();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      enableDrag: false, // sliding up on the held mic cancels a recording: the sheet must not move then
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black38,
+      builder: (c) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(c).bottom), // above the keyboard
+        child: AgentScreen(
+          agent: _agent,
+          settings: s.settings,
+          compact: true,
+          onOpenFull: (live) => _openAgent(live: live),
+        ),
+      ),
+    );
+  }
+
   /// The screen preview runs only while it is switched on, visible and connected (saves battery).
   void _sync() {
     if (!mounted) return;
@@ -111,7 +198,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final allowed = s.settings.screenOn && _resumed && conn.isConnected;
     // on another tab the stream keeps running for a while: coming back shows the picture at once
-    _preview.setActive(allowed && (_tab == 0 || _tab == 1),
+    _preview.setActive(allowed && (_tab == 0 || _tab == 1 || _agentOpen),
         linger: allowed ? const Duration(seconds: 20) : Duration.zero);
     setState(() {});
   }
@@ -127,24 +214,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ControlsTab(conn: conn, settings: s.settings, active: _tab == 5),
     ];
     return Scaffold(
+      backgroundColor: C.bg,
+      extendBody: true, // the tab bar floats over the page
       appBar: AppBar(
-        backgroundColor: C.bg,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         titleSpacing: 16,
         title: Pressable(
           onTap: () => showLaptops(context, s, canLeave: _canLeave, onAdd: _addLaptop),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Flexible(
-              child: Text(conn.laptop.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  semanticsLabel: 'Laptop: ${conn.laptop.name}. Tap to switch',
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
-            ),
-            const Icon(Icons.expand_more_rounded, color: C.muted),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            const GradientText('FASWAY',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 2.6, height: 1.1)),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Flexible(
+                child: Text(conn.laptop.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    semanticsLabel: 'Laptop: ${conn.laptop.name}. Tap to switch',
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 19, height: 1.2)),
+              ),
+              const Icon(Icons.expand_more_rounded, color: C.muted),
+            ]),
           ]),
         ),
         actions: [
           _StatusChip(conn),
+          IconButton(
+            tooltip: 'Assistant',
+            icon: Badge(
+              isLabelVisible: _agent.approvals.isNotEmpty,
+              label: Text('${_agent.approvals.length}'),
+              backgroundColor: C.warn,
+              child: const AiSparkle(size: 24),
+            ),
+            onPressed: _openAgent,
+          ),
           IconButton(
             tooltip: 'Laptop screen',
             icon: AnimatedScale(
@@ -169,13 +273,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: Column(children: [
+      body: Stack(children: [
+        // the same drifting light as the assistant: one look across the app
+        const Positioned.fill(child: AuraBackground()),
+        Column(children: [
         _WeakWifiBanner(conn),
         Expanded(
           child: Stack(children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              // room at the bottom for the floating tab bar
+              padding: EdgeInsets.fromLTRB(12, 0, 12, _GlassNav.height + 18 + MediaQuery.paddingOf(context).bottom),
               child: _TabStack(index: _tab, children: tabs),
+            ),
+            // the assistant, one tap away on every tab (under the pairing overlay, which covers it)
+            Positioned.fill(
+              child: Padding(
+                padding: EdgeInsets.only(bottom: _GlassNav.height + 14 + MediaQuery.paddingOf(context).bottom),
+                child: ListenableBuilder(
+                  listenable: s.settings,
+                  builder: (_, _) => FloatingAssistant(agent: _agent, settings: s.settings, onTap: _openAssistantBar),
+                ),
+              ),
             ),
             Positioned.fill(
               child: AnimatedSwitcher(duration: Motion.medium, child: _PairingOverlay(s, conn, key: ValueKey(conn.state))),
@@ -183,39 +301,122 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ]),
         ),
       ]),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: const Color(0xFF0C0E12),
-        height: 64,
-        labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
-        selectedIndex: _tab,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        animationDuration: Motion.slow,
-        onDestinationSelected: (i) {
+      ]),
+      bottomNavigationBar: _GlassNav(
+        index: _tab,
+        items: [
+          (const Icon(Icons.mouse_rounded), 'Touchpad'),
+          (const Icon(Icons.keyboard_rounded), 'Keyboard'),
+          (const Icon(Icons.mic_rounded), 'Voice'),
+          (const Icon(Icons.apps_rounded), 'Apps'),
+          (_filesIcon(), 'Files'),
+          (const Icon(Icons.tune_rounded), 'Controls'),
+        ],
+        onSelect: (i) {
           if (i != _tab) Fx.select();
           FocusScope.of(context).unfocus();
           setState(() => _tab = i);
           _sync();
         },
-        destinations: [
-          const NavigationDestination(icon: Icon(Icons.mouse_rounded), label: 'Touchpad'),
-          const NavigationDestination(icon: Icon(Icons.keyboard_rounded), label: 'Keyboard'),
-          const NavigationDestination(icon: Icon(Icons.mic_rounded), label: 'Voice'),
-          const NavigationDestination(icon: Icon(Icons.apps_rounded), label: 'Apps'),
-          NavigationDestination(
-            icon: ListenableBuilder(
-              listenable: _files,
-              builder: (_, _) {
-                final n = _files.active.length;
-                return Badge(isLabelVisible: n > 0, label: Text('$n'), child: const Icon(Icons.swap_vert_rounded));
-              },
-            ),
-            label: 'Files',
-          ),
-          const NavigationDestination(icon: Icon(Icons.tune_rounded), label: 'Controls'),
-        ],
       ),
     );
   }
+}
+
+/// The tab bar: a glass pill floating above the page. A gradient light slides to the tab you pick, and its
+/// icon pops in with a bounce.
+class _GlassNav extends StatelessWidget {
+  const _GlassNav({required this.index, required this.items, required this.onSelect});
+  final int index;
+  final List<(Widget, String)> items;
+  final void Function(int) onSelect;
+
+  static const height = 64.0;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          child: Container(
+            height: height,
+            padding: const EdgeInsets.all(1),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(26),
+              gradient: LinearGradient(colors: [
+                Colors.white.withValues(alpha: 0.12),
+                Ai.violet.withValues(alpha: 0.25),
+                Ai.blue.withValues(alpha: 0.2),
+              ]),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 24, offset: const Offset(0, 8)),
+                BoxShadow(color: Ai.violet.withValues(alpha: 0.15), blurRadius: 30, spreadRadius: -8),
+              ],
+            ),
+            child: Container(
+              decoration: BoxDecoration(color: const Color(0xF0121419), borderRadius: BorderRadius.circular(25)),
+              child: LayoutBuilder(builder: (context, box) {
+                final w = box.maxWidth / items.length;
+                return Stack(children: [
+                  // the light behind the selected tab, sliding with a bounce
+                  AnimatedPositioned(
+                    duration: Motion.bounceTime,
+                    curve: Motion.spring,
+                    left: index * w + 6,
+                    top: 6,
+                    width: w - 12,
+                    height: height - 14,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        gradient: LinearGradient(colors: [
+                          Ai.blue.withValues(alpha: 0.28),
+                          Ai.violet.withValues(alpha: 0.28),
+                        ]),
+                        border: Border.all(color: Ai.violet.withValues(alpha: 0.45)),
+                      ),
+                    ),
+                  ),
+                  Row(children: [
+                    for (final (i, (icon, label)) in items.indexed)
+                      Expanded(
+                        child: Semantics(
+                          button: true,
+                          selected: i == index,
+                          child: Pressable(
+                            onTap: () => onSelect(i),
+                            haptics: false,
+                            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              i == index
+                                  ? BounceIn(
+                                      child: ShaderMask(
+                                        blendMode: BlendMode.srcIn,
+                                        shaderCallback: (r) => Ai.gradient.createShader(Offset.zero & r.size),
+                                        child: IconTheme(data: const IconThemeData(color: Colors.white, size: 24), child: icon),
+                                      ),
+                                    )
+                                  : IconTheme(data: const IconThemeData(color: C.muted, size: 22), child: icon),
+                              const SizedBox(height: 3),
+                              Text(label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.fade,
+                                  softWrap: false,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: i == index ? FontWeight.w700 : FontWeight.w500,
+                                    color: i == index ? C.text : C.muted,
+                                  )),
+                            ]),
+                          ),
+                        ),
+                      ),
+                  ]),
+                ]);
+              }),
+            ),
+          ),
+        ),
+      );
 }
 
 class _StatusChip extends StatelessWidget {

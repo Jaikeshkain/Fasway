@@ -9,6 +9,7 @@ import '../core/connection.dart';
 import '../core/settings.dart';
 import 'common.dart';
 import 'live_typing.dart';
+import 'touchpad_tab.dart';
 
 /// Owns the WebRTC stream of the laptop screen (+ optional laptop sound) and the cursor feed.
 /// Shared by the inline preview (Touchpad / Keyboard tabs) and the full-screen page.
@@ -276,10 +277,12 @@ class PreviewController extends ChangeNotifier {
 
 /// Inline preview: shown above the touchpad / keyboard when the 🖥 button is on.
 class ScreenPreview extends StatelessWidget {
-  const ScreenPreview({super.key, required this.controller, required this.settings, this.allowLarge = false});
+  const ScreenPreview(
+      {super.key, required this.controller, required this.settings, this.allowLarge = false, this.showPad = true});
   final PreviewController controller;
   final Settings settings;
   final bool allowLarge;
+  final bool showPad; // offer the small touchpad under the picture
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -296,33 +299,58 @@ class ScreenPreview extends StatelessWidget {
                 ? const SizedBox(width: double.infinity)
                 : Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: large ? h * 0.5 : h * 0.3),
-              child: AspectRatio(
-                aspectRatio: large ? 16 / 12 : 16 / 9,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: PreviewSurface(
-                    controller: controller,
-                    settings: settings,
-                    toolbar: [
-                      _ToolBtn(
-                          icon: Icons.fullscreen_rounded,
-                          onTap: () => Navigator.push(
-                              context,
-                              PageRouteBuilder(
-                                pageBuilder: (_, _, _) => FullscreenPreview(controller: controller, settings: settings),
-                                transitionDuration: Duration.zero,
-                              ))),
-                      if (allowLarge)
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: large ? h * 0.5 : h * 0.3),
+                child: AspectRatio(
+                  aspectRatio: large ? 16 / 12 : 16 / 9,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: PreviewSurface(
+                      controller: controller,
+                      settings: settings,
+                      toolbar: [
+                        if (showPad)
+                          _ToolBtn(
+                            icon: Icons.touch_app_rounded,
+                            tooltip: settings.padOpen ? 'Hide touchpad' : 'Show touchpad',
+                            dim: !settings.padOpen,
+                            onTap: () {
+                              Fx.select();
+                              settings.set('padOpen', !settings.padOpen);
+                            },
+                          ),
                         _ToolBtn(
-                            icon: large ? Icons.unfold_less_rounded : Icons.unfold_more_rounded,
-                            onTap: () => settings.set('screenLarge', !settings.screenLarge)),
-                    ],
+                            icon: Icons.fullscreen_rounded,
+                            tooltip: 'Full screen',
+                            onTap: () => Navigator.push(
+                                context,
+                                PageRouteBuilder(
+                                  pageBuilder: (_, _, _) => FullscreenPreview(controller: controller, settings: settings),
+                                  transitionDuration: Duration.zero,
+                                ))),
+                        if (allowLarge)
+                          _ToolBtn(
+                              icon: large ? Icons.unfold_less_rounded : Icons.unfold_more_rounded,
+                              onTap: () => settings.set('screenLarge', !settings.screenLarge)),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
+              // the touchpad folds open under the picture with a bounce
+              AnimatedSize(
+                duration: Motion.bounceTime,
+                curve: Motion.spring,
+                alignment: Alignment.topCenter,
+                child: showPad && settings.padOpen
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: MiniTouchpad(conn: controller.conn, settings: settings, height: min(200.0, h * 0.26)),
+                      )
+                    : const SizedBox(width: double.infinity),
+              ),
+            ]),
           ),
           );
         },
@@ -381,6 +409,18 @@ class _FullscreenPreviewState extends State<FullscreenPreview> {
               controller: widget.controller,
               settings: widget.settings,
               toolbar: [
+                ListenableBuilder(
+                  listenable: widget.settings,
+                  builder: (context, _) => _ToolBtn(
+                    icon: Icons.touch_app_rounded,
+                    tooltip: widget.settings.padOpen ? 'Hide touchpad' : 'Show touchpad',
+                    dim: !widget.settings.padOpen,
+                    onTap: () {
+                      Fx.select();
+                      widget.settings.set('padOpen', !widget.settings.padOpen);
+                    },
+                  ),
+                ),
                 _ToolBtn(
                   icon: Icons.keyboard_rounded,
                   onTap: () => _typingFocus.hasFocus ? _typingFocus.unfocus() : _typingFocus.requestFocus(),
@@ -396,18 +436,53 @@ class _FullscreenPreviewState extends State<FullscreenPreview> {
               ],
             ),
           ),
+          // full screen: the touchpad floats in a corner, see-through, so the picture stays visible
+          ListenableBuilder(
+            listenable: widget.settings,
+            builder: (context, _) {
+              final size = MediaQuery.sizeOf(context);
+              final landscape = size.width > size.height;
+              return Positioned(
+                right: 12,
+                bottom: 12,
+                width: landscape ? min(340.0, size.width * 0.38) : size.width - 24,
+                child: AnimatedSwitcher(
+                  duration: Motion.bounceTime,
+                  reverseDuration: Motion.fast,
+                  switchInCurve: Motion.bounce,
+                  transitionBuilder: (child, anim) =>
+                      ScaleTransition(scale: anim, alignment: Alignment.bottomRight, child: child),
+                  child: !widget.settings.padOpen
+                      ? const SizedBox.shrink()
+                      : Opacity(
+                          opacity: 0.88,
+                          child: MiniTouchpad(
+                            conn: widget.controller.conn,
+                            settings: widget.settings,
+                            height: landscape ? min(240.0, size.height * 0.55) : min(240.0, size.height * 0.3),
+                          ),
+                        ),
+                ),
+              );
+            },
+          ),
         ]),
       );
 }
 
 class _ToolBtn extends StatelessWidget {
-  const _ToolBtn({required this.icon, required this.onTap, this.dim = false});
+  const _ToolBtn({required this.icon, required this.onTap, this.dim = false, this.tooltip});
   final IconData icon;
   final VoidCallback onTap;
   final bool dim;
+  final String? tooltip;
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(left: 6),
+        child: tooltip == null ? _button() : Tooltip(message: tooltip!, child: _button()),
+      );
+
+  Widget _button() => Pressable(
         child: Material(
           color: Colors.black54,
           borderRadius: BorderRadius.circular(9),

@@ -17,6 +17,8 @@ from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
 from . import audio, status
 from .actions import QuickActions, run_action
+from .agent.runtime import Agent
+from .agent.tools import Env as AgentEnv
 from .devices import DeviceStore
 from .files import FileShare, open_folder
 from .platform_input import inp, nowplaying, screen_permission_problem, sysctl
@@ -65,6 +67,7 @@ class FaswayServer:
         self._sys_pool = ThreadPoolExecutor(1, thread_name_prefix="system", initializer=sysctl.thread_init)
         self._clip_task: asyncio.Task | None = None
         self._clip_from_phone: str | None = None  # don't echo the phone's own clipboard back to it
+        self.agent = Agent(data_dir, AgentEnv(inp, sysctl, nowplaying, self.actions, self._sys, status), self._broadcast)
 
     # ---------- http ----------
     async def index(self, request):
@@ -144,6 +147,7 @@ class FaswayServer:
         path = self.files.offered(request.match_info["fid"])
         if path is None:
             raise web.HTTPNotFound(text="file no longer offered")
+        log.info("sending %s to phone (download started)", path.name)
         resp = web.FileResponse(path)
         resp.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(path.name)}"
         return resp
@@ -151,6 +155,8 @@ class FaswayServer:
     def offer_files(self, paths) -> int:
         """Called from the UI thread: send files to the connected phones. Returns how many files."""
         offers = self.files.offer(paths)
+        for o in offers:
+            log.info("offered %s (%.1f MB) to phones", o["name"], o["size"] / 2**20)
         if offers and self.loop:
             asyncio.run_coroutine_threadsafe(self._broadcast({"t": "file_offer", "files": offers}), self.loop)
         return len(offers)
@@ -201,6 +207,8 @@ class FaswayServer:
                         reply = await self.handle_system(m)
                     elif t == "link":   # the phone measured weak / good Wi-Fi to us
                         reply = self._link_quality(sess, bool(m.get("weak")), m.get("rtt"))
+                    elif t.startswith("agent_"):
+                        reply = await self.agent.handle(sess["dev"], m)
                     else:
                         reply = self.handle(m)
                 except Exception as e:  # never let one bad message kill the session

@@ -18,6 +18,12 @@ class Settings extends ChangeNotifier {
   String get lang => _p.getString('lang') ?? 'mix-roman';
   bool get clipAuto => _p.getBool('clipAuto') ?? true;
   bool get clipNotify => _p.getBool('clipNotify') ?? true; // "Send clipboard" notification
+  bool get speakReplies => _p.getBool('speakReplies') ?? true; // the assistant answers voice requests aloud
+  bool get padOpen => _p.getBool('padOpen') ?? false; // the small touchpad under the laptop screen view
+  // where the floating assistant bubble rests: which side, and how far down (0 top .. 1 bottom)
+  bool get fabLeft => _p.getBool('fabLeft') ?? false;
+  String get whatsNewSeen => _p.getString('whatsNewSeen') ?? ''; // the version whose "What's new" was shown
+  double get fabY => _p.getDouble('fabY') ?? 0.55;
 
   Future<void> set(String key, Object value) async {
     switch (value) {

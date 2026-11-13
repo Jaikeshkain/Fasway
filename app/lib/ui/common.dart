@@ -4,6 +4,8 @@ import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'ai_effects.dart';
+
 /// Set by tool/build_apk.ps1 (--dart-define), shown in Settings.
 const appVersion = String.fromEnvironment('FASWAY_VERSION', defaultValue: 'dev');
 const appBuild = String.fromEnvironment('FASWAY_BUILD', defaultValue: '0');
@@ -27,7 +29,9 @@ class Motion {
   static const medium = Duration(milliseconds: 240);
   static const slow = Duration(milliseconds: 380);
   static const curve = Curves.easeOutCubic;
-  static const spring = Curves.easeOutBack;
+  static const spring = Cubic(0.34, 1.56, 0.64, 1); // overshoots a little more than easeOutBack: lively
+  static const bounce = ElasticOutCurve(0.55); // released buttons and new cards wobble into place
+  static const bounceTime = Duration(milliseconds: 520);
 }
 
 ThemeData faswayTheme() => ThemeData(
@@ -84,7 +88,7 @@ void haptic(bool on) {
   if (on) Fx.tap();
 }
 
-/// Fades and slides its child in the first time it is shown (list items, cards).
+/// Fades in and bounces up into place the first time it is shown (list items, cards).
 class Appear extends StatelessWidget {
   const Appear({super.key, required this.child, this.delay = Duration.zero, this.offset = 14});
   final Widget child;
@@ -92,21 +96,44 @@ class Appear extends StatelessWidget {
   final double offset;
 
   @override
-  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0, end: 1),
-        duration: Motion.slow + delay,
-        curve: Interval(delay.inMilliseconds / (Motion.slow + delay).inMilliseconds, 1, curve: Motion.curve),
-        builder: (context, v, child) => Opacity(
-          opacity: v,
-          child: Transform.translate(offset: Offset(0, (1 - v) * offset), child: child),
+  Widget build(BuildContext context) {
+    final total = Motion.bounceTime + delay;
+    final start = delay.inMilliseconds / total.inMilliseconds;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: total,
+      curve: Interval(start, 1, curve: Motion.bounce),
+      builder: (context, v, child) => Opacity(
+        opacity: v.clamp(0.0, 1.0),
+        child: Transform.translate(
+          offset: Offset(0, (1 - v) * offset),
+          child: Transform.scale(scale: 0.94 + 0.06 * v, child: child),
         ),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Pops in with a bounce each time it is built anew (a tab's icon as it becomes selected).
+class BounceIn extends StatelessWidget {
+  const BounceIn({super.key, required this.child, this.from = 0.6});
+  final Widget child;
+  final double from;
+
+  @override
+  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
+        tween: Tween(begin: from, end: 1),
+        duration: Motion.bounceTime,
+        curve: Motion.bounce,
+        builder: (context, s, child) => Transform.scale(scale: s, child: child),
         child: child,
       );
 }
 
-/// Shrinks a little while pressed and springs back: the touch feel of every custom tappable.
+/// Squishes while pressed and bounces back: the touch feel of every custom tappable.
 class Pressable extends StatefulWidget {
-  const Pressable({super.key, required this.child, this.onTap, this.scale = 0.96, this.haptics = true});
+  const Pressable({super.key, required this.child, this.onTap, this.scale = 0.93, this.haptics = true});
   final Widget child;
   final VoidCallback? onTap;
   final double scale;
@@ -128,8 +155,8 @@ class _PressableState extends State<Pressable> {
   Widget build(BuildContext context) {
     Widget child = AnimatedScale(
       scale: _down ? widget.scale : 1,
-      duration: _down ? Motion.fast : Motion.medium,
-      curve: _down ? Curves.easeOut : Motion.spring,
+      duration: _down ? Motion.fast : Motion.bounceTime,
+      curve: _down ? Curves.easeOut : Motion.bounce,
       child: widget.child,
     );
     if (widget.onTap != null) child = GestureDetector(behavior: HitTestBehavior.opaque, onTap: widget.onTap, child: child);
@@ -242,8 +269,8 @@ class _KeyButtonState extends State<KeyButton> {
         child: AnimatedScale(
           // pressed: sinks in quickly; released: springs back
           scale: _down ? 0.93 : 1,
-          duration: _down ? Motion.fast : Motion.medium,
-          curve: _down ? Curves.easeOut : Motion.spring,
+          duration: _down ? Motion.fast : Motion.bounceTime,
+          curve: _down ? Curves.easeOut : Motion.bounce,
           child: AnimatedContainer(
             duration: _down ? const Duration(milliseconds: 60) : Motion.medium,
             curve: Motion.curve,
@@ -251,10 +278,21 @@ class _KeyButtonState extends State<KeyButton> {
             margin: const EdgeInsets.all(3),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: _down ? Color.lerp(bg, Colors.white, 0.18) : bg,
+              // lit from above like a real key; an active (held) key glows in the assistant's colours
+              gradient: widget.active
+                  ? Ai.gradient
+                  : LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color.lerp(bg, Colors.white, _down ? 0.22 : 0.07)!,
+                        _down ? Color.lerp(bg, Colors.white, 0.12)! : bg,
+                      ],
+                    ),
+              border: Border.all(color: Colors.white.withValues(alpha: _down ? 0.14 : 0.05)),
               borderRadius: BorderRadius.circular(_down ? 14 : 12),
               boxShadow: widget.active
-                  ? [BoxShadow(color: C.accent.withValues(alpha: 0.35), blurRadius: 12, spreadRadius: -2)]
+                  ? [BoxShadow(color: Ai.violet.withValues(alpha: 0.45), blurRadius: 14, spreadRadius: -2)]
                   : null,
             ),
             child: Text(widget.label,
@@ -268,30 +306,60 @@ class _KeyButtonState extends State<KeyButton> {
 }
 
 /// Rounded panel with an optional title row (like the web app's cards).
+/// A glass card: lit from the top-left, with a hairline edge that catches the assistant's colours.
 class Panel extends StatelessWidget {
-  const Panel({super.key, this.title, this.trailing, required this.child});
+  const Panel({super.key, this.title, this.trailing, this.icon, required this.child});
   final String? title;
   final Widget? trailing;
+  final IconData? icon; // shown before the title, in the gradient
   final Widget child;
 
   @override
   Widget build(BuildContext context) => Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        decoration: BoxDecoration(color: C.panel, borderRadius: BorderRadius.circular(16)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (title != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Row(children: [
-                Expanded(
-                    child: Text(title!,
-                        style: const TextStyle(color: C.muted, fontWeight: FontWeight.w600, fontSize: 14))),
-                if (trailing != null) trailing!,
-              ]),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(1), // the gradient edge
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Colors.white.withValues(alpha: 0.10), Ai.violet.withValues(alpha: 0.10), Ai.blue.withValues(alpha: 0.16)],
+          ),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 18, offset: const Offset(0, 6))],
+        ),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(19),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF1D2130), Color(0xFF161921)],
             ),
-          child,
-        ]),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (title != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(children: [
+                  if (icon != null) ...[
+                    ShaderMask(
+                      blendMode: BlendMode.srcIn,
+                      shaderCallback: (r) => Ai.gradient.createShader(Offset.zero & r.size),
+                      child: Icon(icon, size: 18, color: Colors.white),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                      child: Text(title!.toUpperCase(),
+                          style: const TextStyle(
+                              color: Color(0xFFA9AEC0), fontWeight: FontWeight.w700, fontSize: 12, letterSpacing: 1.2))),
+                  if (trailing != null) trailing!,
+                ]),
+              ),
+            child,
+          ]),
+        ),
       );
 }
 

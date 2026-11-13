@@ -22,6 +22,12 @@ import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
     private var notifyLaptop: String? = null
+    private var speaker: Speaker? = null
+
+    override fun onDestroy() {
+        speaker?.shutdown()
+        super.onDestroy()
+    }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -57,6 +63,26 @@ class MainActivity : FlutterActivity() {
                     ClipboardNotification.show(this, notifyLaptop!!)
                 }
                 "unnotify" -> ClipboardNotification.hide(this)
+                // the assistant is waiting for an approval while Fasway is in the background
+                "agentPermission" -> {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 8)
+                    }
+                }
+                "agentNotify" -> AgentNotification.show(this, call.argument<String>("text") ?: "")
+                "agentUnnotify" -> AgentNotification.hide(this)
+            }
+            result.success(null)
+        }
+        // The assistant's replies, read aloud.
+        val speechChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/speech")
+        val speaker = Speaker(this, speechChannel).also { speaker = it }
+        speechChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "speak" -> speaker.speak(call.argument<String>("text") ?: "", call.argument<String>("lang") ?: "en",
+                    call.argument<String>("id") ?: "")
+                "stop" -> speaker.stop()
             }
             result.success(null)
         }
