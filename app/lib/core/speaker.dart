@@ -16,8 +16,19 @@ class Speaker {
   int _id = 0;
   Completer<void>? _done;
 
+  // names the phone's voice says wrong, spelled the way they sound ("Claude" came out as "cloud")
+  static final _sayAs = [
+    (RegExp(r'\bClaude\b', caseSensitive: false), 'Clawd'),
+    (RegExp('क्लाउड'), 'क्लॉड'),
+    (RegExp(r'\bChat ?GPT\b', caseSensitive: false), 'Chat G P T'),
+    (RegExp(r'\bGPT\b'), 'G P T'),
+    (RegExp(r'\bFasway\b', caseSensitive: false), 'Fass way'),
+    (RegExp(r'\bYouTube\b', caseSensitive: false), 'You Tube'),
+  ];
+
   /// Text as it should be heard: symbols the voice would spell out or skip, made into words.
-  static String spoken(String text) => text
+  static String spoken(String text) => _sayAs
+      .fold(text, (t, r) => t.replaceAll(r.$1, r.$2))
       .replaceAllMapped(RegExp(r'(\d)\s*%'), (m) => '${m[1]} percent')
       .replaceAll(RegExp(r'[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]', unicode: true), '')
       .replaceAll(RegExp(r'[*_#`>]'), '')

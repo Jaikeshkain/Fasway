@@ -204,6 +204,10 @@ void main() {
     test('replies are made fit to be heard', () {
       expect(Speaker.spoken('Volume 30%'), 'Volume 30 percent');
       expect(Speaker.spoken('📶 **Done**'), 'Done');
+      expect(Speaker.spoken('Opened Claude and ChatGPT'), 'Opened Clawd and Chat G P T');
+      expect(Speaker.spoken('claude kholo'), 'Clawd kholo');
+      expect(Speaker.spoken('GPT-6 Luna'), 'G P T-6 Luna');
+      expect(Speaker.spoken('क्लाउड खोल दिया'), 'क्लॉड खोल दिया');
     });
 
     test('a catch-up list replaces what the phone knew', () async {
@@ -437,19 +441,21 @@ void main() {
         expect(stt.listens, 2);
       });
 
-      testWidgets('conversation: two silences in a row end it', (tester) async {
+      testWidgets('conversation: silence never ends it; only the user does', (tester) async {
         final (r, stt) = await openWithMic(tester);
         await tester.tap(talk);
         await tester.pump();
-        stt.finish(); // gave up listening: nothing said
-        await tester.pump(const Duration(milliseconds: 400));
-        expect(stt.listens, 2); // one more chance
-        stt.finish();
-        await tester.pump(const Duration(milliseconds: 400));
-        await tester.pump(const Duration(milliseconds: 300)); // Live fades away
-        expect(find.byTooltip('End conversation'), findsNothing);
-        expect(find.text('Conversation ended'), findsOneWidget);
+        for (var i = 0; i < 5; i++) {
+          stt.finish(); // gave up listening: nothing said
+          await tester.pump(const Duration(milliseconds: 400));
+        }
+        expect(stt.listens, 6); // listening again every time
+        expect(find.byTooltip('End conversation'), findsOneWidget);
         expect(starts(r), isEmpty);
+        await tester.tap(find.byTooltip('End conversation'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byTooltip('End conversation'), findsNothing);
         await tester.pump(const Duration(seconds: 3));
       });
 

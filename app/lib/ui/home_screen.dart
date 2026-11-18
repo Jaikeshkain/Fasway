@@ -165,6 +165,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       isScrollControlled: true,
       enableDrag: false, // sliding up on the held mic cancels a recording: the sheet must not move then
+      isDismissible: false, // a tap beside it doesn't close it: only its ✕ (or Back) does
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black38,
       builder: (c) => Padding(

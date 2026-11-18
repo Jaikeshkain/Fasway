@@ -79,7 +79,15 @@ _RULES: list[tuple[str, object]] = [
 _COMPILED = [(re.compile(p), f) for p, f in _RULES]
 
 
+# Services with a desktop app too: opened as the installed app when there is one (the tool falls back to the site)
+_APP_FIRST = {"chatgpt": "ChatGPT", "claude": "Claude", "whatsapp": "WhatsApp", "whatsapp web": "WhatsApp",
+              "व्हाट्सएप": "WhatsApp", "netflix": "Netflix", "instagram": "Instagram", "facebook": "Facebook",
+              "spotify": "Spotify", "linkedin": "LinkedIn"}
+
+
 def _open(name: str) -> Intent:
+    if name in _APP_FIRST:
+        return Intent("open_app", {"name": _APP_FIRST[name]}, f"Opened {_APP_FIRST[name]}")
     if name in SITES:
         return Intent("open_url", {"url": SITES[name]}, f"Opened {name}")
     return Intent("open_app", {"name": APPS[name]}, f"Opened {name}")
@@ -213,6 +221,15 @@ def _search(site: str, query: str, named: bool = False) -> Intent | None:
     return Intent("web_search", {"site": _SEARCH_NAMES[site], "query": q}, f"Searching {_SEARCH_NAMES[site]} for {q}")
 
 
+def _play(site: str, query: str, named: bool = False) -> Intent | None:
+    """Play the top YouTube result (same checks as a search: "play the next song" is the player, not YouTube)."""
+    hit = _search("youtube", query, named)
+    if not hit:
+        return None
+    q = hit.input["query"]
+    return Intent("play_youtube", {"query": q}, "")   # the tool's own words name the video it found
+
+
 def _on_site(s: str) -> list[Intent] | None:
     """A sentence naming a site, in any word order: "youtube arijit ke gane chala de", "play songs on youtube",
     "arijit singh youtube pe lagao", "youtube pe arijit". What's left after the site and the verb is the search."""
@@ -234,12 +251,14 @@ def _on_site(s: str) -> list[Intent] | None:
     def trim(q: str) -> str:
         return re.sub(rf"^(?:{_ON} )+|(?: {_ON})+$", "", q).strip()
 
+    # "chala do" / "play" on YouTube = play it; "search" / "dikhao" = show the results
+    playing = _SEARCH_NAMES[site] == "youtube" and after_verb(_PLAY_F) is not None
     query = after_verb(_PLAY_F | _FIND_F | _SHOW_F)
     if query is not None:
         query = trim(query)
         if not query:
             return [_open(site)]
-        hit = _search(site, query, named=True)
+        hit = (_play if playing else _search)(site, query, named=True)
         return [hit] if hit else None
     if not rest or after_verb(_OPEN_F) == "":
         return [_open(site)]
@@ -261,20 +280,20 @@ def _explicit(raw: str) -> list[Intent] | None:
     pick = lambda p: re.fullmatch(p, s, re.I)   # noqa: E731
     m = pick(rf"(.+?)(?: (?:ke|ka|ki|के|का|की))? ({_alt(_MUSIC_W)}) (?:{_alt(_PLAY_F)})")
     if m:
-        hit = _search("youtube", f"{m[1]} {m[2]}")
+        hit = _play("youtube", f"{m[1]} {m[2]}")
         return [hit] if hit else None
     m = pick(rf"(.+?) (?:{_alt(_PLAY_ONLY_F | _do('play'))})")   # "arijit laga do": "laga" and "baja" are only ever for music
     if m and not _has(m[1].lower(), {"alarm", "timer", "reminder", "password"}):
-        hit = _search("youtube", m[1])
+        hit = _play("youtube", m[1])
         return [hit] if hit else None
     m = pick(rf"(.+?) (?:{_alt(_hi('chala') | _hi_deva('चला', 'चलाओ'))})")
     if m and (len(m[1].split()) >= 3 or _has(m[1].lower(), {"ka", "ke", "ki", "का", "के", "की"})):
         # "tum hi ho chalao": too long for an app name, and "chalao" with a title means play it
-        hit = _search("youtube", m[1])
+        hit = _play("youtube", m[1])
         return [hit] if hit else None
     m = pick(r"(?:play|put on) (.+)")
     if m:
-        hit = _search("youtube", m[1])
+        hit = _play("youtube", m[1])
         return [hit] if hit else None
     m = pick(r"(?:search|find|look up|look for)(?: for)? (.+)") or pick(rf"(.+?) (?:{_alt(_FIND_F)})")
     if m:

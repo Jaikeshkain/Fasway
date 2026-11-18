@@ -25,6 +25,7 @@ if exist dist\Fasway rmdir /s /q dist\Fasway
   --collect-submodules winrt ^
   --collect-submodules anthropic ^
   --collect-submodules openai ^
+  --collect-all uiautomation ^
   --collect-submodules keyring ^
   --copy-metadata keyring ^
   --paths "%CD%" ^

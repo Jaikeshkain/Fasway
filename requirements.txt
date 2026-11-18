@@ -13,6 +13,7 @@ openai>=3.45
 keyring>=25
 dxcam>=0.0.5; sys_platform == "win32"
 pycaw>=20240210; sys_platform == "win32"
+uiautomation>=2.0.29; sys_platform == "win32"
 screen-brightness-control>=0.20; sys_platform == "win32"
 soundcard>=0.4.3; sys_platform == "win32"
 pyobjc-framework-Quartz>=10; sys_platform == "darwin"

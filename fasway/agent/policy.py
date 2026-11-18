@@ -29,6 +29,23 @@ SHELL_WINDOW = re.compile(
 SENSITIVE_WINDOW = re.compile(
     r"password|passcode|\bsign[ -]?in\b|\blog[ -]?in\b|\bbank|netbanking|payment|checkout|\bupi\b|\bcvv\b|\botp\b", re.I)
 
+# Buttons whose press is hard to take back: signing out, deleting, sending, paying, agreeing.
+RISKY_BUTTON = re.compile(
+    r"\b(log ?out|log ?off|sign ?out|delete|remove|erase|clear all|uninstall|reset|format|wipe|send|submit|post|"
+    r"publish|share|pay|purchase|buy|order|place order|checkout|transfer|withdraw|confirm|accept|agree|allow|"
+    r"approve|grant|deactivate|close account|discard|don'?t save|overwrite|replace all|shut ?down|restart|empty|"
+    r"install|update now|run|execute|lock)\b", re.I)
+
+
+def judge_button(name: str, window: str) -> tuple[str, str]:
+    """Pressing a named control in an app."""
+    if RISKY_BUTTON.search(name):
+        return CONFIRM, f"'{name[:40]}' may sign out, delete, send, pay or agree to something"
+    if SHELL_WINDOW.search(window):
+        return CONFIRM, f"this is a command window ({window[:60]})"
+    return SAFE, ""
+
+
 # Programs that run other programs: never opened by the agent, even with approval.
 BLOCKED_PROGRAMS = {
     "cmd", "command prompt", "powershell", "pwsh", "wt", "windows terminal", "terminal", "bash", "wsl", "regedit",

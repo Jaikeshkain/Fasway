@@ -1,4 +1,4 @@
-﻿"""Agent tests. Nothing here touches the real laptop or spends money: the laptop is a recording stand-in
+"""Agent tests. Nothing here touches the real laptop or spends money: the laptop is a recording stand-in
 and Claude is a scripted model. Run from the project root:  python -m unittest tests.test_agent -v
 """
 import asyncio
@@ -88,6 +88,10 @@ class Base(unittest.IsolatedAsyncioTestCase):
         self.llm = ScriptedLLM()
         self.key = "sk-test"
         self.key_for = {"anthropic", "openai"}
+        # the fake laptop answers at once: no need to wait for windows or the media player
+        for name, value in (("APP_WAIT", 0.05), ("MEDIA_SETTLE", 0)):
+            self.addCleanup(setattr, T, name, getattr(T, name))
+            setattr(T, name, value)
         self.agent = self.make_agent()
 
     def make_agent(self):
@@ -194,9 +198,9 @@ class EverydaySentences(unittest.TestCase):
             "open amazon.in": [("open_url", {"url": "https://amazon.in"})],
             "open vlc": [("open_app", {"name": "vlc"})],
             "search tom and jerry on youtube": [("web_search", {"site": "youtube", "query": "tom and jerry"})],
-            "play arijit singh on youtube": [("web_search", {"site": "youtube", "query": "arijit singh"})],
-            "youtube pe arijit ke gaane chalao": [("web_search", {"site": "youtube", "query": "arijit ke gaane"})],
-            "arijit ke gaane chalao": [("web_search", {"site": "youtube", "query": "arijit gaane"})],
+            "play arijit singh on youtube": [("play_youtube", {"query": "arijit singh"})],
+            "youtube pe arijit ke gaane chalao": [("play_youtube", {"query": "arijit ke gaane"})],
+            "arijit ke gaane chalao": [("play_youtube", {"query": "arijit gaane"})],
             "open example.com": [("open_url", {"url": "https://example.com"})],
             "weather in delhi search karo": [("web_search", {"site": "google", "query": "weather in delhi"})],
             "how much battery is left": [("get_system_status", {})],
@@ -215,33 +219,34 @@ class EverydaySentences(unittest.TestCase):
 
     def test_how_people_actually_talk(self):
         yt = lambda q: [("web_search", {"site": "youtube", "query": q})]   # noqa: E731
+        play = lambda q: [("play_youtube", {"query": q})]   # noqa: E731
         go = lambda u: [("open_url", {"url": u})]   # noqa: E731
         settings = [("open_app", {"name": "ms-settings:"})]
         down, up = [("change_volume", {"direction": "down"})], [("change_volume", {"direction": "up"})]
         nxt, pause = [("media", {"action": "next"})], [("media", {"action": "play_pause"})]
         cases = {
             # the sentences that failed on the phone
-            "YouTube Arijit Singh ke gane chala de": yt("arijit singh ke gane"),
-            "play songs on YouTube": yt("songs"),
+            "YouTube Arijit Singh ke gane chala de": play("arijit singh ke gane"),
+            "play songs on YouTube": play("songs"),
             "setting App kholo": settings,
             # one request, any word order, any verb form
-            "Arijit Singh ke gane YouTube pe chala de": yt("arijit singh ke gane"),
-            "youtube pe arijit singh ke gaane laga do": yt("arijit singh ke gaane"),
-            "youtube par kishore kumar baja do": yt("kishore kumar"),
-            "you tube pe lo-fi music chalao": yt("lo-fi music"),
-            "youtube per comedy videos dikhao": yt("comedy videos"),
-            "yaar youtube pe koi comedy video laga de": yt("koi comedy video"),
-            "kishore kumar ke gaane baja de": yt("kishore kumar gaane"),
-            "sad songs chala do": yt("sad songs"),
-            "arijit singh laga do": yt("arijit singh"),
-            "play arijit singh": yt("arijit singh"),
-            "can you play some old hindi songs on youtube": yt("some old hindi songs"),
-            "youtube pe arijit": yt("arijit"),
+            "Arijit Singh ke gane YouTube pe chala de": play("arijit singh ke gane"),
+            "youtube pe arijit singh ke gaane laga do": play("arijit singh ke gaane"),
+            "youtube par kishore kumar baja do": play("kishore kumar"),
+            "you tube pe lo-fi music chalao": play("lo-fi music"),
+            "youtube per comedy videos dikhao": yt("comedy videos"),  # "dikhao" = show the results
+            "yaar youtube pe koi comedy video laga de": play("koi comedy video"),
+            "kishore kumar ke gaane baja de": play("kishore kumar gaane"),
+            "sad songs chala do": play("sad songs"),
+            "arijit singh laga do": play("arijit singh"),
+            "play arijit singh": play("arijit singh"),
+            "can you play some old hindi songs on youtube": play("some old hindi songs"),
+            "youtube pe arijit": yt("arijit"),  # no verb: show the results
             "youtube kholo": go("https://www.youtube.com"),
             "youtube khol de": go("https://www.youtube.com"),
             "youtube chala de": go("https://www.youtube.com"),
             "open you tube": go("https://www.youtube.com"),
-            "whats app kholo": go("https://web.whatsapp.com"),
+            "whats app kholo": [("open_app", {"name": "WhatsApp"})],   # the installed app first
             "google pe weather dhundo": [("web_search", {"site": "google", "query": "weather"})],
             "google weather in delhi": [("web_search", {"site": "google", "query": "weather in delhi"})],
             "amazon pe shoes search kar do": [("web_search", {"site": "amazon", "query": "shoes"})],
@@ -287,7 +292,7 @@ class EverydaySentences(unittest.TestCase):
             "what is the date today": [("get_time", {})],
             # from the laptop's real request history
             "battery percentage": [("get_system_status", {})],
-            "open Cloud": go("https://claude.ai"),
+            "open Cloud": [("open_app", {"name": "Claude"})],
             "open Raho Mel on edge": go("https://mail.zoho.com"),
             "open Zoho Mail on Edge": go("https://mail.zoho.com"),
             "open youtube on chrome": go("https://www.youtube.com"),
@@ -298,8 +303,8 @@ class EverydaySentences(unittest.TestCase):
             "ruk jao": pause,
             "ek gaana bajao": pause,
             "yeh gaana hatao": nxt,
-            "tum hi ho play karo": yt("tum hi ho"),
-            "arijit singh ka tum hi ho chalao": yt("arijit singh ka tum hi ho"),
+            "tum hi ho play karo": play("tum hi ho"),
+            "arijit singh ka tum hi ho chalao": play("arijit singh ka tum hi ho"),
             "shut it down": [("power", {"action": "shutdown"})],
             "new tab kholo": [("press_keys", {"keys": "ctrl+t"})],
             "paste kar do": [("press_keys", {"keys": "ctrl+v"})],
@@ -312,7 +317,7 @@ class EverydaySentences(unittest.TestCase):
             "flipkart kholo aur shoes search karo": [("web_search", {"site": "flipkart", "query": "shoes"})],
             # several at once
             "awaaz kam kar de aur youtube khol de": down + go("https://www.youtube.com"),
-            "notepad kholo aur youtube pe arijit chalao": [("open_app", {"name": "notepad"})] + yt("arijit"),
+            "notepad kholo aur youtube pe arijit chalao": [("open_app", {"name": "notepad"})] + play("arijit"),
             "gaana rok do phir laptop lock kar do": pause + [("power", {"action": "lock"})],
         }
         for text, want in cases.items():
@@ -458,7 +463,8 @@ class OpeningApps(unittest.IsolatedAsyncioTestCase):
             return fn(*a)
 
         class Sys:
-            pass
+            def list_windows(self, have=None):
+                return {"windows": [], "icons": {}}
         s = Sys()
         s.open_target = open_target
         env = T.Env(inp=None, sysctl=s, nowplaying=None, actions=None, run_sys=run_sys)
@@ -472,6 +478,318 @@ class OpeningApps(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(T.ToolFailed):
             await T.BY_NAME["open_app"].run(env, {"name": "command prompt"})
         self.assertEqual(len(opened), 1)
+
+
+class ActualResults(Base):
+    """Replies say what really happened on the laptop, not what was asked for."""
+
+    async def test_volume_reports_the_level_reached(self):
+        self.key = None
+        t = await self.run_goal("volume 30")      # the fake laptop always reads back 50
+        self.assertEqual(t.reply, "Volume is now 50% (asked for 30%)")
+        self.pc.get_volume = lambda: (30, False)
+        t = await self.run_goal("volume 30")
+        self.assertEqual(t.reply, "Volume is now 30%")
+
+    async def test_next_song_says_what_is_playing(self):
+        self.key = None
+
+        async def state(have):
+            return {"current": "spotify", "sessions": [
+                {"id": "spotify", "app": "Spotify", "title": "Kesariya", "artist": "Arijit Singh", "status": "playing"}]}
+        self.pc.get_state = state
+        t = await self.run_goal("agla gaana")
+        self.assertEqual(t.reply, "Now playing: Kesariya by Arijit Singh (Spotify)")
+
+    async def test_an_app_that_opens_says_its_window_is_up(self):
+        self.key = None
+        opened = self.pc.open_target
+
+        def open_target(target):
+            self.pc.windows = self.pc.windows + [{"id": 99, "title": "Untitled - Paint", "app": "mspaint", "active": True}]
+            return opened(target)
+        self.pc.open_target = open_target
+        t = await self.run_goal("paint kholo")
+        self.assertEqual(t.reply, "Opened mspaint: its window 'Untitled - Paint' is up")
+
+    async def test_an_app_that_shows_no_window_is_not_claimed(self):
+        self.key = None
+        t = await self.run_goal("paint kholo")
+        self.assertIn("no window has appeared yet", t.reply)
+
+    async def test_installed_app_first_then_the_website(self):
+        self.key = None
+        old = T.apps.find
+        self.addCleanup(setattr, T.apps, "find", old)
+        T.apps.find = lambda name, apps=None: "shell:AppsFolder\\OpenAI.ChatGPT!App" if name == "ChatGPT" else None
+        await self.run_goal("chatgpt kholo")
+        self.assertEqual(self.pc.did("open_target")[-1], ("open_target", "shell:AppsFolder\\OpenAI.ChatGPT!App"))
+        t = await self.run_goal("claude kholo")
+        self.assertEqual(self.pc.did("open_target")[-1], ("open_target", "https://claude.ai"))
+        self.assertIn("isn't installed", t.reply)
+
+
+class PagesInYourBrowser(Base):
+    """Web pages in the user's own browser: read like app windows once the browser has page reading."""
+
+    def setUp(self):
+        super().setUp()
+        from fasway.agent import appui, browser_access
+        self.BA = browser_access
+        self.real_restart = browser_access.restart_with_page_reading
+        self.flagged = False
+        self.restarts = []
+        snap = appui.Snapshot(7, "Reports - Logger - Microsoft Edge", "msedge",
+                              [appui.Item(1, "Button", "Back", None), appui.Item(2, "Text box", "Address and search bar", None)])
+        olds = (appui.read, browser_access.owner_of_window, browser_access.process_can_read_pages,
+                browser_access.restart_with_page_reading, browser_access.wait_until_ready, dict(T._page_target))
+        appui.read = lambda hwnd, app: (setattr(appui, "_last", snap), snap)[1]
+        browser_access.owner_of_window = lambda hwnd: ("msedge.exe", 4242) if hwnd == 7 else ("notepad.exe", 1)
+        browser_access.process_can_read_pages = lambda pid: self.flagged
+        browser_access.wait_until_ready = lambda: None
+
+        def restart(exe, pid):
+            self.restarts.append((exe, pid))
+            self.flagged = True
+            return "Edge is open again with your tabs, and the assistant can now read its web pages"
+        browser_access.restart_with_page_reading = restart
+
+        def restore():
+            (appui.read, browser_access.owner_of_window, browser_access.process_can_read_pages,
+             browser_access.restart_with_page_reading, browser_access.wait_until_ready) = olds[:5]
+            T._page_target.clear()
+            T._page_target.update(olds[5])
+        self.addCleanup(restore)
+        self.pc.windows = [{"id": 7, "title": "Reports - Logger - Microsoft Edge", "app": "msedge", "active": True}]
+
+    async def test_a_browser_without_page_reading_says_so(self):
+        await self.run_goal("x", call("read_app", window="edge"), say("ok"))
+        shown = self.llm.requests[1]["messages"][-1]["content"][0]["content"]
+        self.assertIn("NOTE: Edge was started without page reading", shown)
+        self.assertIn("enable_page_reading", shown)
+
+    async def test_restarting_the_browser_asks_first_then_pages_can_be_read(self):
+        job = asyncio.create_task(self.run_goal(
+            "x", call("read_app", window="edge"), call("enable_page_reading", tid="t2"),
+            call("read_app", tid="t3", window="edge"), say("ok")))
+        card = await self.next_approval()
+        self.assertEqual(card["action"], "Restart Edge so the assistant can read web pages")
+        self.assertIn("reopens Edge with your tabs", card["why"])
+        self.assertEqual(self.restarts, [])                       # nothing closed before the yes
+        self.agent.answer(card["id"], True)
+        await job
+        self.assertEqual(self.restarts, [("msedge.exe", 4242)])   # exactly the browser that was read
+        self.assertNotIn("NOTE:", self.llm.requests[3]["messages"][-1]["content"][0]["content"])
+
+    async def test_declined_restart_leaves_the_browser_alone(self):
+        job = asyncio.create_task(self.run_goal("x", call("enable_page_reading"), say("ok")))
+        card = await self.next_approval()
+        self.agent.answer(card["id"], False)
+        await job
+        self.assertEqual(self.restarts, [])
+
+    async def test_a_desktop_app_gets_no_browser_note(self):
+        self.pc.windows = [{"id": 1, "title": "Voice Logger", "app": "VoiceLogger", "active": True}]
+        await self.run_goal("x", call("read_app", window=""), say("ok"))
+        self.assertNotIn("NOTE:", self.llm.requests[1]["messages"][-1]["content"][0]["content"])
+
+    def test_the_restart_reopens_the_profiles_the_browser_last_had_open(self):
+        import json
+        import types
+        BA, started, seen = self.BA, [], {"n": 0}
+        data = Path(self._tmp.name) / "User Data"
+        data.mkdir()
+        # the user switched to "Work" inside the browser after it was started with "Profile 2"
+        (data / "Local State").write_text(json.dumps({"profile": {
+            "last_used": "Profile 3", "last_active_profiles": ["Profile 2", "Profile 3"],
+            "info_cache": {"Profile 2": {"name": "Personal"}, "Profile 3": {"name": "Work"}}}}), encoding="utf-8")
+        before = types.SimpleNamespace(pid=10, is_running=lambda: False, children=lambda recursive: [],
+                                       cmdline=lambda: [r"C:\Edge\msedge.exe", f"--user-data-dir={data}",
+                                                        "--profile-directory=Profile 2", "--source-shortcut-location=taskbar"])
+        after = types.SimpleNamespace(pid=11, cmdline=lambda: [r"C:\Edge\msedge.exe", BA.FLAG])
+
+        def mains(exe):
+            seen["n"] += 1
+            return [before] if seen["n"] == 1 else [after]
+        olds = (BA._main_processes, BA._windows_of, BA._start_as_user)
+        BA._main_processes, BA._windows_of = mains, lambda pid: []
+        BA._start_as_user = lambda path, args: started.append((path, args))
+
+        def restore():
+            BA._main_processes, BA._windows_of, BA._start_as_user = olds
+        self.addCleanup(restore)
+        msg = self.real_restart("msedge.exe", 10)
+        self.assertEqual(started, [
+            (r"C:\Edge\msedge.exe", [f"--user-data-dir={data}", "--profile-directory=Profile 3", BA.FLAG, "--restore-last-session"]),
+            (r"C:\Edge\msedge.exe", [f"--user-data-dir={data}", "--profile-directory=Profile 2", "--restore-last-session"])])
+        self.assertIn("(Work, Personal profiles)", msg)
+
+    async def test_browser_means_the_windows_default_browser(self):
+        self.pc.windows = [{"id": 1, "title": "Untitled - Notepad", "app": "Notepad", "active": True},
+                           {"id": 5, "title": "Docs - Google Chrome", "app": "chrome", "active": False},
+                           {"id": 7, "title": "Reports - Microsoft Edge", "app": "msedge", "active": False}]
+        olds = (self.BA.owner_of_window, self.BA.default_browser)
+        self.BA.owner_of_window = lambda h: {5: ("chrome.exe", 55), 7: ("msedge.exe", 4242)}.get(h, ("notepad.exe", 1))
+        self.BA.default_browser = lambda: "msedge.exe"
+        self.addCleanup(lambda: (setattr(self.BA, "owner_of_window", olds[0]), setattr(self.BA, "default_browser", olds[1])))
+        await self.run_goal("x", call("read_app", window="browser"), say("ok"))
+        self.assertEqual(T._page_target, {"exe": "msedge.exe", "pid": 4242})   # Edge (the default), not newer Chrome
+
+    def test_the_restart_keeps_the_profile_and_adds_page_reading(self):
+        import types
+        BA, started, seen = self.BA, [], {"n": 0}
+        before = types.SimpleNamespace(pid=10, is_running=lambda: False, children=lambda recursive: [],
+                                       cmdline=lambda: [r"C:\Edge\msedge.exe", "--user-data-dir=C:\\nowhere-fasway-test",
+                                                        "--profile-directory=Profile 2", "--source-shortcut-location=taskbar"])
+        after = types.SimpleNamespace(pid=11, cmdline=lambda: [r"C:\Edge\msedge.exe", BA.FLAG])
+
+        def mains(exe):
+            seen["n"] += 1
+            return [before] if seen["n"] == 1 else [after]
+        olds = (BA._main_processes, BA._windows_of, BA._start_as_user)
+        BA._main_processes, BA._windows_of = mains, lambda pid: []
+        BA._start_as_user = lambda path, args: started.append((path, args))
+
+        def restore():
+            BA._main_processes, BA._windows_of, BA._start_as_user = olds
+        self.addCleanup(restore)
+        msg = self.real_restart("msedge.exe", 10)   # no Local State to read: the profile it was started with
+        self.assertEqual(started, [(r"C:\Edge\msedge.exe", ["--user-data-dir=C:\\nowhere-fasway-test",
+                                                           "--profile-directory=Profile 2", BA.FLAG, "--restore-last-session"])])
+        self.assertIn("with your tabs", msg)
+
+
+class AppControls(Base):
+    """Reading an app's named buttons and pressing them by number. The real reading needs Windows UI
+    Automation, so these use a stand-in list; a live check drives a real (off-screen) app separately."""
+
+    def setUp(self):
+        super().setUp()
+        from fasway.agent import appui
+        self.appui = appui
+        items = [appui.Item(0, "Text", "Logged in as Priya", None), appui.Item(1, "Text box", "Search", None),
+                 appui.Item(2, "Text box", "PIN", None, password=True), appui.Item(3, "Checkbox", "Remember me", None),
+                 appui.Item(4, "Button", "Logout", None), appui.Item(5, "Menu item", "Reports", None)]
+        self.snap = appui.Snapshot(1, "Voice Logger", "VoiceLogger", items)
+        self.done = []
+        old = (appui.read, appui.press, appui.fill, appui._last)
+
+        def read(hwnd, app):
+            appui._last = self.snap
+            self.done.append(("read", hwnd))
+            return self.snap
+        appui.read = read
+        appui.press = lambda n: (self.done.append(("press", n)), f"Pressed '{self.snap.item(n).name}'")[1]
+        appui.fill = lambda n, text: (self.done.append(("fill", n, text)), "Typed")[1]
+
+        def restore():
+            appui.read, appui.press, appui.fill, appui._last = old
+        self.addCleanup(restore)
+        self.pc.windows = [{"id": 7, "title": "Voice Logger", "app": "VoiceLogger", "active": False},
+                           {"id": 1, "title": "Untitled - Notepad", "app": "Notepad", "active": True}]
+
+    def test_the_list_the_ai_reads(self):
+        text = self.appui.describe(self.snap)
+        self.assertIn("[4] Button: Logout", text)
+        self.assertIn("    Text: Logged in as Priya", text)
+        self.assertIn("[2] Text box: PIN (password field: never type here)", text)
+
+    async def test_logout_is_read_then_pressed_after_a_yes(self):
+        job = asyncio.create_task(self.run_goal(
+            "voice logger se logout karo",
+            call("read_app", window="voice logger"), call("press_control", tid="t2", item=4),
+            call("read_app", tid="t3", window="voice logger"), say("Logged out")))
+        card = await self.next_approval()
+        self.assertEqual(card["action"], "Press 'Logout' in Voice Logger")
+        self.assertIn("sign out", card["why"])
+        self.assertNotIn(("press", 4), self.done)          # nothing pressed before the yes
+        self.agent.answer(card["id"], True)
+        t = await job
+        self.assertEqual(self.done, [("read", 7), ("press", 4), ("read", 7)])
+        self.assertIn("[4] Button: Logout", self.llm.requests[1]["messages"][-1]["content"][0]["content"])
+        self.assertEqual(t.state, "done")
+
+    async def test_ordinary_controls_need_no_approval(self):
+        await self.run_goal("x", call("read_app", window=""), call("press_control", tid="t2", item=5),
+                            call("fill_control", tid="t3", item=1, text="monday calls"), say("ok"))
+        self.assertEqual(self.done, [("read", 1), ("press", 5), ("fill", 1, "monday calls")])
+        self.assertFalse([m for m in self.sent if m["t"] == "agent_approval"])
+
+    async def test_never_types_into_a_password_field(self):
+        t = await self.run_goal("x", call("read_app", window="voice logger"),
+                                call("fill_control", tid="t2", item=2, text="1234"), say("can't"))
+        self.assertNotIn(("fill", 2, "1234"), self.done)
+        self.assertEqual(t.steps[1]["status"], "declined")
+        self.assertFalse([m for m in self.sent if m["t"] == "agent_approval"])   # refused outright
+
+    async def test_a_sign_in_window_is_not_read_without_a_yes(self):
+        self.pc.windows = [{"id": 9, "title": "Sign in - Bank", "app": "Chrome", "active": True}]
+        job = asyncio.create_task(self.run_goal("x", call("read_app", window=""), say("ok")))
+        card = await self.next_approval()
+        self.assertIn("would go to the AI", card["why"])
+        self.agent.answer(card["id"], False)
+        await job
+        self.assertEqual(self.done, [])
+
+    def test_risky_buttons(self):
+        for name in ("Logout", "Log out", "Sign out", "Delete record", "Send", "Pay now", "Place order", "Uninstall",
+                     "I agree", "Don't Save"):
+            self.assertEqual(policy.judge_button(name, "Voice Logger")[0], CONFIRM, name)
+        for name in ("Reports", "Open", "Search", "Next", "Settings", "Play", "Refresh"):
+            self.assertEqual(policy.judge_button(name, "Voice Logger")[0], SAFE, name)
+        self.assertEqual(policy.judge_button("OK", "Command Prompt")[0], CONFIRM)
+
+    def test_old_numbers_are_refused(self):
+        with self.assertRaises(self.appui.AppUIError):
+            self.snap.item(99)
+
+
+class PlayingOnYouTube(Base):
+    """"Chala do" plays the top result instead of leaving the user on a page of results."""
+
+    def found(self, result):
+        old = T.top_youtube_video
+        T.top_youtube_video = lambda q: (self.asked.append(q), result)[1]
+        self.addCleanup(setattr, T, "top_youtube_video", old)
+        self.asked = []
+
+    async def test_plays_the_top_video(self):
+        self.key = None
+        self.found(("lTRiuFIWV54", "1 A.M Study Session"))
+        t = await self.run_goal("YouTube pe lo-fi study music chala do aur volume 40 kar do")
+        self.assertEqual(self.asked, ["lo-fi study music"])
+        self.assertEqual(self.pc.did("open_target"), [("open_target", "https://www.youtube.com/watch?v=lTRiuFIWV54")])
+        self.assertEqual(self.pc.did("set_volume"), [("set_volume", 40, None)])
+        self.assertIn("Playing 1 A.M Study Session on YouTube", t.reply)
+
+    async def test_falls_back_to_the_results_when_no_video_is_found(self):
+        self.key = None
+        self.found(None)
+        t = await self.run_goal("arijit singh laga do")
+        self.assertEqual(self.pc.did("open_target"), [("open_target", "https://www.youtube.com/results?search_query=arijit+singh")])
+        self.assertEqual(t.state, "done")
+        self.assertIn("opened the YouTube results", t.reply)
+
+    async def test_the_ai_is_offered_play_and_told_to_use_it(self):
+        from fasway.agent import prompts
+        self.assertIn("play_youtube", T.BY_NAME)
+        self.assertIn("play_youtube", prompts.SYSTEM)
+        self.assertIn("Never press Tab, Enter", prompts.SYSTEM)
+
+    def test_reads_the_first_real_video_from_a_results_page(self):
+        page = ('{"adSlotRenderer":{"videoId":"AAAAAAAAAAA"}} '
+                '{"videoRenderer":{"videoId":"Umqb9KENgmk","thumbnail":{},"title":{"runs":[{"text":"Tum Hi Ho \\u0026 more"}]}}}')
+
+        class Page:
+            def read(self, n):
+                return page.encode()
+        import urllib.request
+        old = urllib.request.urlopen
+        urllib.request.urlopen = lambda req, timeout: Page()
+        self.addCleanup(setattr, urllib.request, "urlopen", old)
+        self.assertEqual(T.top_youtube_video("tum hi ho"), ("Umqb9KENgmk", "Tum Hi Ho & more"))
+        urllib.request.urlopen = lambda req, timeout: (_ for _ in ()).throw(OSError("offline"))
+        self.assertIsNone(T.top_youtube_video("tum hi ho"))
 
 
 class WithoutAi(Base):
@@ -847,6 +1165,22 @@ class ChoosingProviders(Base):
         from fasway.agent.llm import OpenAIClient, make_client
         self.assertIsInstance(make_client("gpt-6-sol", "sk-x"), OpenAIClient)
         self.assertIsInstance(make_client("claude-haiku-5-5", "sk-x"), ClaudeClient)
+
+    def test_a_missing_library_is_explained_not_a_crash(self):
+        import builtins
+        from fasway.agent.llm import make_client
+        real = builtins.__import__
+
+        def no_openai(name, *a, **k):
+            if name == "openai":
+                raise ModuleNotFoundError("No module named 'openai'")
+            return real(name, *a, **k)
+        builtins.__import__ = no_openai
+        self.addCleanup(setattr, builtins, "__import__", real)
+        with self.assertRaises(LLMError) as e:
+            make_client("gpt-6-luna", "sk-x")
+        self.assertEqual(e.exception.kind, "setup")
+        self.assertIn("run.bat", str(e.exception))
 
     def test_keys_are_told_apart(self):
         from fasway.agent import keystore

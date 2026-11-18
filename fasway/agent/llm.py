@@ -29,7 +29,7 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 class LLMError(Exception):
-    """kind: auth | rate | network | server | bad_request"""
+    """kind: auth | rate | network | server | bad_request | setup"""
 
     def __init__(self, kind: str, message: str):
         super().__init__(message)
@@ -177,7 +177,13 @@ class OpenAIClient:
 
 
 def make_client(model: str, api_key: str):
-    return (OpenAIClient if MODELS[model]["provider"] == "openai" else ClaudeClient)(api_key)
+    provider = MODELS[model]["provider"]
+    try:
+        return (OpenAIClient if provider == "openai" else ClaudeClient)(api_key)
+    except ImportError as e:   # e.g. Fasway started at sign-in from a setup that predates this provider
+        log.warning("agent: %s library missing: %s", provider, e)
+        raise LLMError("setup", f"The {PROVIDER_NAMES[provider]} library isn't installed on the laptop. "
+                                f"Run run.bat once in the Fasway folder to install it, then try again.") from e
 
 
 async def check_key(api_key: str, provider: str = "anthropic") -> tuple[bool | None, str]:

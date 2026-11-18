@@ -64,7 +64,6 @@ class _AgentScreenState extends State<AgentScreen> {
   bool _talk = false; // conversation mode: listen, send, answer aloud, listen again
   String _talkStatus = '';
   bool _talkHeard = false;
-  int _talkMisses = 0;
   bool _byVoice = false; // the last request was spoken, so its answer is spoken too
   int _approvalsSeen = 0;
 
@@ -150,7 +149,6 @@ class _AgentScreenState extends State<AgentScreen> {
     _speaker.stop();
     setState(() {
       _talk = true;
-      _talkMisses = 0;
       _talkStatus = 'Starting…';
     });
     if (_stt.isListening) await _stt.stop();
@@ -198,7 +196,6 @@ class _AgentScreenState extends State<AgentScreen> {
     if (words.isNotEmpty) _talkHeard = true;
     _text.text = words;
     if (!r.finalResult || words.isEmpty) return;
-    _talkMisses = 0;
     final said = words.toLowerCase().replaceAll(RegExp(r"[^\p{L}\p{N}\s]", unicode: true), '').trim();
     if (_goodbyes.contains(said)) {
       _text.clear();
@@ -210,12 +207,8 @@ class _AgentScreenState extends State<AgentScreen> {
   }
 
   /// Listening ended with nothing said. Once may be a pause; twice in a row, the conversation is over.
+  /// Listening ended with nothing said: listen again. Live stays open until the user ends it (✕ or "bas").
   void _talkSilence() {
-    if (++_talkMisses >= 2) {
-      _endTalk();
-      if (mounted) toast(context, 'Conversation ended');
-      return;
-    }
     Future.delayed(const Duration(milliseconds: 300), () {
       if (_talk && _talkStatus == 'Listening…' && !_talkHeard) _listenForTalk();
     });

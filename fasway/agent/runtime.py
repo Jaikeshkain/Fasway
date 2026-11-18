@@ -29,6 +29,9 @@ FOCUS_TOOLS = {"type_text", "press_keys"}   # these act on whichever window is i
 FOLLOWS = {"set_volume": "volume", "change_volume": "volume", "mute": "volume",
            "set_brightness": "brightness", "change_brightness": "brightness"}
 FOLLOW_UP_SECONDS = 120
+# their result text says what really happened, so a built-in command replies with it
+REPORTS_RESULT = {"set_volume", "change_volume", "set_brightness", "change_brightness", "media", "open_app",
+                  "play_youtube", "get_system_status", "get_now_playing", "get_time", "get_windows"}
 
 
 class Agent:
@@ -154,7 +157,8 @@ class Agent:
                 if failed:   # later steps may depend on this one
                     self._finish(task, "failed", text)
                     return
-                replies.append(step.reply or text)
+                # what the laptop reports (the level reached, the video found) beats a fixed phrase
+                replies.append(text if step.tool in REPORTS_RESULT or not step.reply else step.reply)
                 if step.tool in FOLLOWS:
                     self._recent[task.device] = (FOLLOWS[step.tool], time.time())
             self._finish(task, "done", ". ".join(replies))
