@@ -30,6 +30,10 @@ class Laptop {
   /// Empty for a laptop paired before Fasway kept several: it stays trusted with the phone's old key.
   String key;
 
+  /// The laptop's network card and its network's broadcast address, for Wake-on-LAN (learned while connected).
+  String mac;
+  String bcast;
+
   Laptop({
     required this.id,
     required this.host,
@@ -40,6 +44,8 @@ class Laptop {
     String? name,
     this.renamed = false,
     this.key = '',
+    this.mac = '',
+    this.bcast = '',
   })  : ips = ips ?? [],
         name = name ?? 'Laptop';
 
@@ -68,7 +74,7 @@ class Laptop {
   }
 
   Map<String, dynamic> toJson() =>
-      {'id': id, 'host': host, 'port': port, 'token': token, 'fp': fp, 'ips': ips, 'name': name, 'renamed': renamed, 'key': key};
+      {'id': id, 'host': host, 'port': port, 'token': token, 'fp': fp, 'ips': ips, 'name': name, 'renamed': renamed, 'key': key, 'mac': mac, 'bcast': bcast};
 
   static Laptop fromJson(Map<String, dynamic> j) => Laptop(
         id: j['id'] as String,
@@ -80,6 +86,8 @@ class Laptop {
         name: j['name'] as String?,
         renamed: (j['renamed'] ?? false) as bool,
         key: (j['key'] ?? '') as String,
+        mac: (j['mac'] ?? '') as String,
+        bcast: (j['bcast'] ?? '') as String,
       );
 
   String encode() => jsonEncode(toJson());

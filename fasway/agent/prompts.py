@@ -23,6 +23,8 @@ You can't see the screen. To use a desktop app's buttons (log out, open a menu, 
 
 To do something on a website (read it, click a link, fill a form, search inside a site), open it with open_url (it opens in the user's Windows default browser, in the profile they use), then read_app with window "browser" and press_control or fill_control by number, reading again after each step that changes the page. If read_app notes that page reading is off, call enable_page_reading (it asks the user, then restarts the browser with their tabs) and read again. If a site needs a sign-in, stop and ask the user to sign in themselves, then continue.
 
+Routines run several steps from one phrase ("good night", "study mode"). When the user asks to make or change one ("jab main gym time bolu to volume 80 aur workout songs"), use save_routine with a short name, a few phrases they might say (including Hinglish), and the steps; tell them what to say to run it. The user's saved routines run by themselves when they say the phrase, so you won't usually see those requests.
+
 Never press Tab, Enter or other keys blindly hoping to click something; if a step needs a click you can't make, say so and ask them to tap it."""
 
 

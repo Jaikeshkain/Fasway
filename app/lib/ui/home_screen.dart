@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/agent.dart';
 import '../core/app_state.dart';
 import '../core/connection.dart';
 import '../core/files.dart';
+import '../core/wake.dart';
 import 'agent_screen.dart';
 import 'ai_effects.dart';
 import 'floating_assistant.dart';
@@ -279,6 +282,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         const Positioned.fill(child: AuraBackground()),
         Column(children: [
         _WeakWifiBanner(conn),
+        _OfflineBanner(conn),
         Expanded(
           child: Stack(children: [
             Padding(
@@ -493,6 +497,104 @@ class _WeakWifiBanner extends StatelessWidget {
                     ),
                   ]),
                 ),
+              ]),
+            ),
+    );
+  }
+}
+
+/// After a few seconds without the laptop: "Laptop not reachable", with Wake laptop (Wake-on-LAN) once
+/// the phone knows the laptop's network card.
+class _OfflineBanner extends StatefulWidget {
+  const _OfflineBanner(this.conn);
+  final Connection conn;
+  @override
+  State<_OfflineBanner> createState() => _OfflineBannerState();
+}
+
+class _OfflineBannerState extends State<_OfflineBanner> {
+  Timer? _delay;
+  bool _show = false, _sending = false;
+
+  Connection get conn => widget.conn;
+  bool get _away => conn.state == LinkState.offline || conn.state == LinkState.connecting;
+
+  @override
+  void initState() {
+    super.initState();
+    conn.addListener(_onState);
+    _onState();
+  }
+
+  @override
+  void dispose() {
+    conn.removeListener(_onState);
+    _delay?.cancel();
+    super.dispose();
+  }
+
+  void _onState() {
+    if (!_away) {
+      _delay?.cancel();
+      _delay = null;
+      if (_show && mounted) setState(() => _show = false);
+    } else if (!_show && _delay == null) {
+      // reconnects after a Wi-Fi blip take a second or two: only a real absence gets the banner
+      _delay = Timer(const Duration(seconds: 6), () {
+        _delay = null;
+        if (mounted && _away) setState(() => _show = true);
+      });
+    }
+  }
+
+  Future<void> _wake() async {
+    Fx.heavy();
+    setState(() => _sending = true);
+    final ok = await Wake.send(conn.laptop);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    toast(context, ok ? 'Wake-up sent. It can take 10–20 seconds…' : 'Connect to this laptop once first', ms: 3500);
+    conn.reconnectNow();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canWake = Wake.canWake(conn.laptop);
+    return AnimatedSize(
+      duration: Motion.medium,
+      curve: Motion.curve,
+      alignment: Alignment.topCenter,
+      child: !_show
+          ? const SizedBox(width: double.infinity)
+          : Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: C.panel2,
+                border: Border.all(color: C.bad.withValues(alpha: 0.45)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(children: [
+                const Icon(Icons.bedtime_rounded, color: C.muted),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('${conn.laptop.name} isn\'t reachable', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                    const SizedBox(height: 2),
+                    Text(
+                      canWake
+                          ? 'Asleep, or on another Wi-Fi? Wake it from here.'
+                          : 'Is it on and on the same Wi-Fi as this phone?',
+                      style: const TextStyle(color: C.muted, fontSize: 12),
+                    ),
+                  ]),
+                ),
+                if (canWake)
+                  FilledButton.tonal(
+                    onPressed: _sending ? null : _wake,
+                    child: Text(_sending ? 'Waking…' : 'Wake laptop'),
+                  ),
               ]),
             ),
     );

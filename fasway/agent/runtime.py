@@ -14,6 +14,7 @@ from . import intents, keystore, prompts
 from . import tools as T
 from .llm import MODELS, PROVIDER_NAMES, LLMError, LLMReply, cost_usd, make_client
 from .policy import BLOCKED, CONFIRM, Budget
+from .routines import RoutineError, Routines
 from .store import INR_PER_USD, AgentStore, Task
 
 log = logging.getLogger("fasway")
@@ -29,6 +30,8 @@ FOCUS_TOOLS = {"type_text", "press_keys"}   # these act on whichever window is i
 FOLLOWS = {"set_volume": "volume", "change_volume": "volume", "mute": "volume",
            "set_brightness": "brightness", "change_brightness": "brightness"}
 FOLLOW_UP_SECONDS = 120
+# in a routine, only these steps' results are worth saying ("Volume set to 30%" for each step would be noise)
+ROUTINE_REPORTS = {"play_youtube", "get_system_status", "get_now_playing", "get_time"}
 # their result text says what really happened, so a built-in command replies with it
 REPORTS_RESULT = {"set_volume", "change_volume", "set_brightness", "change_brightness", "media", "open_app",
                   "play_youtube", "get_system_status", "get_now_playing", "get_time", "get_windows"}
@@ -37,6 +40,9 @@ REPORTS_RESULT = {"set_volume", "change_volume", "set_brightness", "change_brigh
 class Agent:
     def __init__(self, data_dir, env: T.Env, broadcast: Callable[[dict], Awaitable], llm_factory=None, key_source=None):
         self.store = AgentStore(data_dir)
+        self.routines = Routines(data_dir)
+        if getattr(env, "routines", None) is None:
+            env.routines = self.routines
         self.env = env
         self.broadcast = broadcast
         self._llm_factory = llm_factory or make_client       # tests pass a scripted model
@@ -76,7 +82,23 @@ class Agent:
         if t == "agent_reset":
             self._chats.pop(device, None)
             return None
+        if t == "agent_routines":
+            return self.routines_msg()
+        if t == "agent_routine_save":
+            try:
+                self.routines.save(m.get("routine") or {}, T.BY_NAME)
+            except RoutineError as e:
+                return {"t": "toast", "msg": f"Couldn't save: {e}"}
+            await self.broadcast(self.routines_msg())
+            return None
+        if t == "agent_routine_del":
+            if self.routines.delete(str(m.get("id"))):
+                await self.broadcast(self.routines_msg())
+            return None
         return None
+
+    def routines_msg(self) -> dict:
+        return {"t": "agent_routines", "items": self.routines.items}
 
     def settings_msg(self) -> dict:
         s = self.store.settings
@@ -142,6 +164,10 @@ class Agent:
         task.state, task.reply, task.finished = state, reply, time.time()
 
     async def _work(self, task: Task):
+        routine = self.routines.find(task.goal)
+        if routine:
+            await self._run_routine(task, routine)
+            return
         model = self.store.settings["model"]
         key = self._key(MODELS[model]["provider"])
         exact = intents.match(task.goal)
@@ -170,6 +196,24 @@ class Agent:
                                          f"for {MODELS[model]['label']}.")
             return
         await self._ai_loop(task, self._llm_factory(model, key))
+
+    async def _run_routine(self, task: Task, routine: dict):
+        """Every step through the same gate as anything else. A step that fails or is declined doesn't stop the
+        rest (a brightness the monitor won't take shouldn't keep the laptop awake)."""
+        task.source = "routine"
+        log.info("agent: routine %s", routine["name"])
+        said, problems = [], []
+        for step in routine["steps"]:
+            text, failed = await self._act(task, step["tool"], dict(step["input"]))
+            if failed:
+                tool = T.BY_NAME.get(step["tool"])
+                problems.append((tool.label(step["input"]) if tool else "") or step["tool"])
+            elif step["tool"] in ROUTINE_REPORTS:
+                said.append(text)
+        done = len(routine["steps"]) - len(problems)
+        reply = f"{routine['name']}: done" if not problems else \
+            f"{routine['name']}: {done} of {len(routine['steps'])} steps done. Not done: {'; '.join(problems)}"
+        self._finish(task, "done" if done else "failed", ". ".join([reply, *said]))
 
     # ---------- Claude ----------
     def _chat(self, task: Task, model: str) -> dict:

@@ -66,6 +66,14 @@ class Connection extends ChangeNotifier {
     onLaptopChanged(laptop);
   }
 
+  void _learnWake(String mac, String bcast) {
+    if (mac.isEmpty || (mac == laptop.mac && bcast == laptop.bcast)) return;
+    laptop
+      ..mac = mac
+      ..bcast = bcast;
+    onLaptopChanged(laptop);
+  }
+
   List<String> _candidates() {
     final list = <String>[];
     final f = discovery.found[laptop.id];
@@ -161,6 +169,7 @@ class Connection extends ChangeNotifier {
           case 'hello':
             laptopOs = (m['os'] ?? 'win') as String;
             _learnName(m['name'] ?? discovery.found[laptop.id]?.name); // older laptops don't send it
+            _learnWake('${m['mac'] ?? ''}', '${m['bcast'] ?? ''}');
             _set(LinkState.connected);
             saveNativeLink();
         }
@@ -307,6 +316,10 @@ class Connection extends ChangeNotifier {
 
   /// Proves to the laptop that a request comes from this trusted phone.
   Map<String, String> get authHeaders => {'X-Fasway-Device': identity.id, 'X-Fasway-Key': _key};
+
+  /// Tests: a message as if the laptop had sent it.
+  @visibleForTesting
+  void debugReceive(Map<String, dynamic> m) => _messages.add(m);
 
   void disconnect() {
     _stopped = true;

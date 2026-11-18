@@ -20,6 +20,17 @@ Tap **✨** in the Android app and say or type what you want, in English, हि
 - **Web pages:** it reads pages in your **Windows default browser** (Edge, Chrome or Brave), in the profile you're using. The first time, the browser has to be reopened once with page reading turned on; the assistant asks first, and your tabs come back.
 - **Voice conversation:** the conversation screen keeps listening until you close it, and replies are read aloud.
 
+### Routines
+One phrase runs several steps at once, with no AI and no cost (they work without an API key).
+- **Starter routines:**
+  - **🌙 Good night** ("good night", "so raha hoon"): mute, brightness 10%, sleep.
+  - **📚 Study mode** ("study mode", "padhai mode"): lo-fi music on YouTube, volume 30%.
+  - **☀️ Good morning** ("good morning"): unmute, volume 40%, brightness 80%, then the time and battery.
+- **Run one:** say its name or one of its phrases to the assistant, or tap it under **Apps → Routines**.
+- **Make your own:** **Apps → Routines → New**. Pick steps: volume, mute, brightness, play on YouTube, open an app or website, music, lock/sleep/shut down, keys, a quick action, wait. Or ask the assistant (needs a key): *"make a routine called gym time: volume 80 and play workout songs"*.
+- **Safety:** each step goes through the same checks as everything else. Sleep, shut down and other risky steps still ask on the phone. If you say no, or a step fails, the other steps still run. Routines can't type text or press buttons inside apps.
+- Stored on the laptop in `data/routines.json`.
+
 **What it can't do, whatever it's asked:** run terminal commands, open terminals or script files, delete files, or read your clipboard.
 **What it asks you first:** shutting down, restarting, sleeping or signing out; closing a window; unusual shortcuts; quick actions that run a command; pressing risky buttons (log out, delete, pay, send); reopening the browser; typing into a terminal or a window that looks like a sign-in or payment page. No answer in 2 minutes counts as no, and **STOP** ends a task at once.
 
@@ -33,7 +44,7 @@ These limits are enforced by Fasway's code, not by the AI. They can't catch ever
 - Fasway can run as administrator (see [Notes](#notes)); a trusted phone can then control everything on the laptop. Only approve phones you own.
 
 ## Tests
-- Laptop: `python -m unittest tests.test_core tests.test_agent`. These use a fake laptop and scripted AI replies, so they spend nothing.
+- Laptop: `python -m unittest tests.test_core tests.test_routines tests.test_agent`. These use a fake laptop and scripted AI replies, so they spend nothing.
 - Android app: `flutter test` in `app/`.
 - GitHub runs both on every push. The laptop apps are only built when the laptop tests pass, and the Android APKs are built too.
 
@@ -137,6 +148,28 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
   - Examples: Ctrl, then type `c` → Ctrl+C. Shift, then ← → select text. Win, then type `d` → show desktop.
 - **Shortcut buttons:** Copy, Paste, Cut, Undo, Redo, Select all, Save, Find. They use Ctrl on Windows and ⌘ on Mac.
 - **Screen preview:** shown above the keyboard too (🖥), so you can watch what you type. While the phone keyboard is open, the bottom tabs hide to make room.
+
+## Wake the laptop (Wake-on-LAN)
+When the app can't reach the laptop for a few seconds, it shows **"… isn't reachable"** with a **Wake laptop** button. **Wake laptop** is also in the laptop list's ⋮ menu. The phone sends a "wake-up packet" on the Wi-Fi to the laptop's network card; the laptop tells the phone that card's address each time it connects.
+
+It only works if the laptop is set up to wake this way:
+1. **Device Manager** → **Network adapters** → your Wi-Fi (or Ethernet) adapter → **Properties**.
+2. **Power Management** tab: tick **Allow this device to wake the computer**, and **Only allow a magic packet to wake the computer**.
+3. **Advanced** tab: set **Wake on Magic Packet** to **Enabled**. On some Wi-Fi adapters it's called **Wake on WLAN**.
+
+- **Wi-Fi** can usually wake the laptop only from **sleep**, not from shut down or hibernate. **Ethernet** often also works from hibernate.
+- The phone and laptop must be on the same network.
+- Some laptops also need Wake-on-LAN switched on in the BIOS/UEFI.
+- If it doesn't wake, the laptop's Wi-Fi card doesn't support it while asleep.
+
+## Presentation remote
+**Apps → Presentation remote** turns the phone into a clicker for PowerPoint, Google Slides, Keynote or a PDF:
+- **Next / Back:** big buttons (Next is the large one). They press → and ←.
+- **Volume buttons:** up = next slide, down = back, while this screen is open.
+- **Start** (F5), **From here** (Shift+F5), **Black** (B, again to show), **End** (Esc).
+- **Laser** (PowerPoint, Windows): turns on PowerPoint's laser pointer (Ctrl+L); slide your finger on the pad to move it.
+- **Timer** at the top: starts with **Start**. Tap it to pause or go on, and hold it to reset.
+- The phone screen stays on while Fasway is open.
 
 ## Apps tab 🧩
 - **Quick actions:** your own one-tap buttons, saved on the laptop (`actions.json`). It comes with some starter buttons: File Explorer, Task Manager, Screenshot, Show desktop, Settings, Notepad, YouTube, Google.
@@ -250,10 +283,12 @@ Settings for the packaged app are stored in `~/Library/Application Support/Faswa
 fasway/   Python service: server.py, main.py (QR window),
           input_win.py (Windows SendInput), input_mac.py (macOS Quartz), platform_input.py (picks one)
 fasway/agent/  The assistant: runtime.py, intents.py (built-in commands), tools.py, policy.py (approvals),
-          appui.py (buttons in apps), browser_access.py (page reading), llm.py (Claude / GPT)
+          appui.py (buttons in apps), browser_access.py (page reading), llm.py (Claude / GPT),
+          routines.py (one phrase, several steps)
+fasway/wol.py  The network card address the phone needs to wake the laptop
 app/      Android app (Flutter)
 web/      Phone web app (index.html, app.js, app.css)
-tests/    Laptop tests (test_core.py, test_agent.py)
+tests/    Laptop tests (test_core.py, test_routines.py, test_agent.py)
 packaging/  App builds: build_mac.sh (.app + .dmg), build_windows.bat (.exe), make_icon.py
 .github/workflows/build.yml  Builds Mac + Windows apps on GitHub
 data/     Generated: pairing token, HTTPS certificate (keep private)

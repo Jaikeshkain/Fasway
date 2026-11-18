@@ -12,6 +12,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
@@ -23,6 +24,20 @@ import kotlin.concurrent.thread
 class MainActivity : FlutterActivity() {
     private var notifyLaptop: String? = null
     private var speaker: Speaker? = null
+    private var keysChannel: MethodChannel? = null
+    private var volumeKeys = false   // the presentation remote is open
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val code = event.keyCode
+        if (volumeKeys && (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            // one slide per press (holding the button doesn't race through the deck)
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                keysChannel?.invokeMethod("volume", if (code == KeyEvent.KEYCODE_VOLUME_UP) "up" else "down")
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     override fun onDestroy() {
         speaker?.shutdown()
@@ -80,6 +95,17 @@ class MainActivity : FlutterActivity() {
                 "agentUnnotify" -> AgentNotification.hide(this)
             }
             result.success(null)
+        }
+        // Presentation remote: the volume buttons change slides instead of the phone's volume.
+        keysChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/keys").apply {
+            setMethodCallHandler { call, result ->
+                if (call.method == "volumeKeys") {
+                    volumeKeys = call.arguments == true
+                    result.success(null)
+                } else {
+                    result.notImplemented()
+                }
+            }
         }
         // Fingerprint / screen lock before risky laptop actions.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/lock").setMethodCallHandler { call, result ->

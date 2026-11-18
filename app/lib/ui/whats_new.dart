@@ -7,12 +7,11 @@ import 'common.dart';
 /// Each line can be tried straight away.
 Future<void> showWhatsNew(BuildContext context, {VoidCallback? onAssistant, VoidCallback? onLive, VoidCallback? onScreen}) {
   final items = [
-    (Icons.auto_awesome_rounded, 'A new assistant', 'Ask the laptop anything in English, हिंदी or Hinglish. It answers, and acts.', onAssistant),
-    (Icons.graphic_eq_rounded, 'Live conversation', 'Just talk: it listens, answers aloud, and listens again. Say "bas" to end.', onLive),
-    (Icons.bubble_chart_rounded, 'Assistant on every screen', 'The glowing ✦ bubble opens a voice bar anywhere. Drag it out of the way.', null),
-    (Icons.touch_app_rounded, 'Touchpad under the screen', 'Watching the laptop screen? Tap 🖱 on it for a touchpad right there.', onScreen),
-    (Icons.delete_sweep_rounded, 'Slide to cancel', 'Holding the mic and changed your mind? Slide to the bin and let go.', null),
-    (Icons.desktop_windows_rounded, 'See what it does', 'Turn on the laptop screen in the assistant to watch every step.', onScreen),
+    (Icons.nights_stay_rounded, 'Routines', 'Say "good night" or "study mode": several steps at once, free. Make your own in Apps, or ask ✦.', onAssistant),
+    (Icons.slideshow_rounded, 'Presentation remote', 'Apps → Presentation remote: big Next, volume buttons as a clicker, timer, laser.', null),
+    (Icons.bedtime_rounded, 'Wake your laptop', 'Laptop asleep? Tap Wake laptop when it isn\'t reachable (needs Wake-on-LAN on).', null),
+    (Icons.fingerprint_rounded, 'Confirm it\'s you', 'Restart, shut down and commands ask for your fingerprint first.', null),
+    (Icons.graphic_eq_rounded, 'Live conversation', 'Just talk: it listens, answers aloud, and listens again until you close it.', onLive),
   ];
   return showModalBottomSheet<void>(
     context: context,

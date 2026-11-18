@@ -18,6 +18,7 @@ from urllib.parse import quote_plus
 
 from . import apps, appui, browser_access, policy
 from .policy import BLOCKED, CONFIRM, SAFE
+from .routines import STEP_TOOLS
 
 SEARCH_SITES = {
     "google": "https://www.google.com/search?q={q}",
@@ -43,6 +44,7 @@ class Env:
     actions: object
     run_sys: Callable[..., Awaitable]   # runs a blocking function on the server's system thread
     status: object = None
+    routines: object = None             # routines.Routines (the agent fills it in)
 
 
 @dataclass
@@ -322,6 +324,39 @@ async def _set_clipboard(env: Env, i: dict) -> str:
     return "Copied to the laptop clipboard"
 
 
+async def _save_routine(env: Env, i: dict) -> str:
+    from .routines import RoutineError
+    steps = []
+    for s in i["steps"]:
+        try:
+            inp = json.loads(s["input"] or "{}")
+        except ValueError:
+            raise ToolFailed(f"The input for {s['tool']} isn't valid JSON")
+        steps.append({"tool": s["tool"], "input": inp})
+    try:
+        r = env.routines.save({"name": i["name"], "phrases": i["phrases"], "steps": steps}, BY_NAME)
+    except RoutineError as e:
+        raise ToolFailed(f"Couldn't save the routine: {e}")
+    said = ", ".join(f'"{p}"' for p in [r["name"], *r["phrases"]][:4])
+    return f"Saved routine {r['name']} ({len(r['steps'])} steps). Say {said} to run it."
+
+
+async def _list_routines(env: Env, i: dict) -> str:
+    if not env.routines.items:
+        return "There are no routines yet."
+    return "\n".join(f"{r['name']} (say: {', '.join([r['name'], *r.get('phrases', [])][:4])}): "
+                     + "; ".join(f"{s['tool']} {json.dumps(s['input'], ensure_ascii=False)}" for s in r["steps"])
+                     for r in env.routines.items)
+
+
+async def _delete_routine(env: Env, i: dict) -> str:
+    r = env.routines.by_name(i["name"])
+    if not r:
+        raise ToolFailed(f"No routine named '{i['name']}'")
+    env.routines.delete(r["id"])
+    return f"Deleted routine {r['name']}"
+
+
 async def _wait(env: Env, i: dict) -> str:
     s = max(0.0, min(10.0, float(i["seconds"])))
     await asyncio.sleep(s)
@@ -484,8 +519,9 @@ def _risk_power(i, f, e):
 
 
 def _risk_action(i, f, e):
+    from ..actions import runs_command
     a = _find_action(e, i["name"])
-    if a and (a["type"] == "command" or (a["type"] == "macro" and "cmd " in a["value"].lower())):
+    if a and runs_command(a):
         return CONFIRM, "this quick action runs a command"
     return SAFE, ""
 
@@ -563,6 +599,20 @@ TOOLS: list[Tool] = [
                           "check it worked.", {"item": _P("integer")}, _press_control, risk=_risk_press, label=_label_press),
     Tool("fill_control", "Type `text` into text box number `item` from the last read_app list (replaces what's there).",
          {"item": _P("integer"), "text": _P("string")}, _fill_control, risk=_risk_fill, label=_label_fill),
+    Tool("save_routine", "Create or replace a routine: a name plus phrases that run several steps at once, with no AI "
+                         "(e.g. \"gym time\": volume 80, play workout music). Saying its name or a phrase later runs "
+                         "the steps. Each step is one of these tools with its input as a JSON object string, e.g. "
+                         "{\"tool\": \"set_volume\", \"input\": \"{\\\"percent\\\": 80}\"}. Saving with an existing "
+                         "name replaces that routine.",
+         {"name": _P("string"), "phrases": {"type": "array", "items": {"type": "string"}},
+          "steps": {"type": "array", "items": {
+              "type": "object", "additionalProperties": False, "required": ["input", "tool"],
+              "properties": {"tool": _E(*sorted(STEP_TOOLS)), "input": _P("string")}}}},
+         _save_routine, label=lambda i: f"Saving routine {i['name']}"),
+    Tool("list_routines", "List the user's routines with their phrases and steps.", {}, _list_routines,
+         label=lambda i: "Checking your routines"),
+    Tool("delete_routine", "Delete a routine by name.", {"name": _P("string")}, _delete_routine,
+         risk=lambda i, f, e: (CONFIRM, "it can't be undone"), label=lambda i: f"Delete routine {i['name']}"),
 ]
 BY_NAME = {t.name: t for t in TOOLS}
 

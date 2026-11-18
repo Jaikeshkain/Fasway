@@ -15,7 +15,7 @@ from urllib.parse import quote
 from aiohttp import web, WSMsgType
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
-from . import audio, status
+from . import audio, status, wol
 from .actions import NotAllowed, QuickActions, run_action
 from .agent.runtime import Agent
 from .agent.tools import Env as AgentEnv
@@ -246,10 +246,14 @@ class FaswayServer:
         self.on_clients(len(self.clients))
         log.info("phone connected: %s (%s)", self.devices.devices.get(sess["dev"], {}).get("name", "?"), request.remote)
         sock = request.transport.get_extra_info("sockname") if request.transport else None
+        hello = {"t": "hello", "os": "mac" if sys.platform == "darwin" else "win",
+                 "name": socket.gethostname()}   # the app's laptop list shows it
         if sock:
             self.on_local_ip(sock[0])
-        await ws.send_str(json.dumps({"t": "hello", "os": "mac" if sys.platform == "darwin" else "win",
-                                      "name": socket.gethostname()}))   # the app's laptop list shows it
+            card = wol.adapter_for(sock[0])   # so the phone can wake this laptop later
+            if card:
+                hello.update(card)
+        await ws.send_str(json.dumps(hello))
         if self._clip_task is None:
             self._clip_task = asyncio.create_task(self._watch_clipboard())
             self._status_task = asyncio.create_task(self._watch_battery())

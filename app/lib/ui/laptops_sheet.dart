@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../core/connection.dart';
 import '../core/laptop.dart';
+import '../core/wake.dart';
 import 'common.dart';
 
 /// Colour and short text for a connection's state.
@@ -124,10 +125,22 @@ class _LaptopRow extends StatelessWidget {
       trailing: PopupMenuButton<String>(
         tooltip: 'Options for ${laptop.name}',
         color: C.panel,
-        onSelected: (v) => v == 'rename' ? _rename(context) : _forget(context),
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: 'rename', child: Text('Rename')),
-          PopupMenuItem(value: 'forget', child: Text('Forget', style: TextStyle(color: C.bad))),
+        onSelected: (v) async {
+          switch (v) {
+            case 'wake':
+              Fx.heavy();
+              await Wake.send(laptop);
+              if (context.mounted) toast(context, 'Wake-up sent to ${laptop.name}', ms: 3000);
+            case 'rename':
+              _rename(context);
+            default:
+              _forget(context);
+          }
+        },
+        itemBuilder: (_) => [
+          if (Wake.canWake(laptop)) const PopupMenuItem(value: 'wake', child: Text('Wake laptop')),
+          const PopupMenuItem(value: 'rename', child: Text('Rename')),
+          const PopupMenuItem(value: 'forget', child: Text('Forget', style: TextStyle(color: C.bad))),
         ],
       ),
     );

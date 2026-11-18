@@ -23,7 +23,7 @@ class Task:
     goal: str
     device: str = ""
     state: str = "running"   # running | waiting_approval | done | failed | stopped | over_budget
-    source: str = "ai"       # builtin | ai
+    source: str = "ai"       # builtin | routine | ai
     model: str = ""
     reply: str = ""
     steps: list[dict] = field(default_factory=list)   # {"text", "status": running|done|failed|declined}

@@ -8,6 +8,8 @@ import '../core/phone_lock.dart';
 import '../core/connection.dart';
 import '../core/settings.dart';
 import 'common.dart';
+import 'presentation_screen.dart';
+import 'routines_panel.dart';
 
 /// Quick actions, open a link on the laptop, and the laptop's open windows (app switcher).
 class AppsTab extends StatefulWidget {
@@ -279,6 +281,27 @@ class _AppsTabState extends State<AppsTab> {
 
   @override
   Widget build(BuildContext context) => ListView(children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Material(
+            color: C.panel,
+            borderRadius: BorderRadius.circular(16),
+            child: ListTile(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              leading: const Icon(Icons.slideshow_rounded, color: C.accent, size: 30),
+              title: const Text('Presentation remote', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Big Next / Back, volume buttons as a clicker, timer, laser',
+                  style: TextStyle(color: C.muted, fontSize: 12)),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () {
+                Fx.tap();
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => PresentationScreen(conn: conn, settings: widget.settings)));
+              },
+            ),
+          ),
+        ),
+        RoutinesPanel(conn: conn, active: widget.active),
         Panel(
           title: 'Quick actions',
           trailing: TextButton(

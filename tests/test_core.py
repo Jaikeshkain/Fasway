@@ -105,6 +105,26 @@ class CommandActions(unittest.TestCase):
         self.assertTrue(again.is_allowed(again.get(a["id"])))
 
 
+class WakeOnLan(unittest.TestCase):
+    def test_card_and_broadcast_for_the_address_phones_reach(self):
+        import socket
+        from collections import namedtuple
+        from unittest import mock
+
+        import psutil
+
+        from fasway import wol
+        A = namedtuple("A", "family address netmask")
+        cards = {"Wi-Fi": [A(psutil.AF_LINK, "AA-BB-CC-DD-EE-FF", None),
+                           A(socket.AF_INET, "192.168.1.24", "255.255.255.0")],
+                 "vEthernet": [A(psutil.AF_LINK, "00-15-5D-00-00-01", None),
+                               A(socket.AF_INET, "172.20.0.1", "255.255.240.0")]}
+        with mock.patch.object(psutil, "net_if_addrs", return_value=cards):
+            self.assertEqual(wol.adapter_for("192.168.1.24"), {"mac": "aa:bb:cc:dd:ee:ff", "bcast": "192.168.1.255"})
+            self.assertEqual(wol.adapter_for("172.20.0.1")["bcast"], "172.20.15.255")
+            self.assertIsNone(wol.adapter_for("10.0.0.9"))
+
+
 class FileNames(unittest.TestCase):
     def test_names_from_the_phone_are_made_safe(self):
         self.assertEqual(safe_name("../../Windows/evil.exe"), "evil.exe")
