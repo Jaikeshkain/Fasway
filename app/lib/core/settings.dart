@@ -1,10 +1,17 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'phone_lock.dart';
+
 /// User preferences (same defaults as the web app).
 class Settings extends ChangeNotifier {
-  Settings(this._p);
+  Settings(this._p) {
+    PhoneLock.enabled = phoneLock;
+  }
   final SharedPreferences _p;
+
+  /// Fingerprint / screen lock before risky laptop actions (see PhoneLock).
+  bool get phoneLock => _p.getBool('phoneLock') ?? true;
 
   double get speed => _p.getDouble('speed') ?? 1.6;
   double get accel => _p.getDouble('accel') ?? 1.2;
@@ -36,6 +43,7 @@ class Settings extends ChangeNotifier {
       case int v:
         await _p.setInt(key, v);
     }
+    if (key == 'phoneLock') PhoneLock.enabled = value as bool;
     notifyListeners();
   }
 

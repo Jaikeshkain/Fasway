@@ -16,7 +16,7 @@ from aiohttp import web, WSMsgType
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
 from . import audio, status
-from .actions import QuickActions, run_action
+from .actions import NotAllowed, QuickActions, run_action
 from .agent.runtime import Agent
 from .agent.tools import Env as AgentEnv
 from .devices import DeviceStore
@@ -38,8 +38,12 @@ WEB_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 
 class FaswayServer:
     def __init__(self, token: str, port: int, cert: Path, key: Path, on_clients=None, data_dir: Path | None = None,
-                 on_local_ip=None, on_pair_request=None, on_devices=None, on_file_received=None, inbox: Path | None = None, on_link_quality=None):
+                 on_local_ip=None, on_pair_request=None, on_devices=None, on_file_received=None, inbox: Path | None = None, on_link_quality=None,
+                 on_command_request=None):
         self.token = token
+        # on_command_request(action_name, command, answer): ask on the laptop whether a new or changed
+        # quick-action command may run; call answer(True/False). None = allow (tests)
+        self.on_command_request = on_command_request
         self.on_file_received = on_file_received or (lambda path, phone: None)  # a phone sent a file
         self.on_link_quality = on_link_quality or (lambda dev, name, weak, rtt: None)  # phone reports Wi-Fi
         self.files = FileShare(inbox)
@@ -51,9 +55,13 @@ class FaswayServer:
             import tempfile
             data_dir = Path(cert).parent if cert else Path(tempfile.gettempdir()) / "fasway-test"
         self.devices = DeviceStore(data_dir)
+        if self.devices.forgotten:
+            log.info("forgot phones not seen for 90 days: %s", ", ".join(self.devices.forgotten))
         self._pending_pairs: dict[str, asyncio.Future] = {}
         self._dev_sockets: dict[str, set] = {}
         self.actions = QuickActions(data_dir)
+        if on_command_request is not None:
+            self.actions.confirm = self._confirm_command
         self._alerts = status.BatteryAlerts()
         self._status_task: asyncio.Task | None = None
         self.port = port
@@ -278,6 +286,24 @@ class FaswayServer:
         await ws.send_str(json.dumps({"t": "paired"}))
         await self._admit(request, ws, sess)
 
+    async def _confirm_command(self, a: dict) -> bool:
+        """A quick action wants to run a command the laptop hasn't allowed yet: ask on the laptop."""
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+
+        def answer(ok, f=fut):   # called from the UI thread
+            loop.call_soon_threadsafe(lambda: f.done() or f.set_result(bool(ok)))
+
+        log.info("asking on the laptop before running the command of “%s”", a["name"])
+        await self._broadcast({"t": "toast", "msg": f"Allow “{a['name']}” on the laptop first (new command)"})
+        self.on_command_request(a["name"], a["value"], answer)
+        try:
+            ok = await asyncio.wait_for(fut, 120)
+        except asyncio.TimeoutError:
+            ok = False
+        log.info("command of “%s” %s", a["name"], "allowed" if ok else "not allowed")
+        return ok
+
     async def remove_device(self, dev_id: str):
         self.devices.remove(dev_id)
         self.on_devices()
@@ -465,7 +491,10 @@ class FaswayServer:
             if a:
                 log.info("quick action: %s", a["name"])
                 try:
+                    await self.actions.check(a)
                     await run_action(a, inp, sysctl, self._sys)
+                except NotAllowed:
+                    return {"t": "toast", "msg": f"“{a['name']}” wasn't allowed on the laptop"}
                 except Exception as e:
                     return {"t": "toast", "msg": f"“{a['name']}” failed: {e}"}
             return None

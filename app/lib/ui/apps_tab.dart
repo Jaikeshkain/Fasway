@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/phone_lock.dart';
 import '../core/connection.dart';
 import '../core/settings.dart';
 import 'common.dart';
@@ -187,10 +188,14 @@ class _AppsTabState extends State<AppsTab> {
         childAspectRatio: 0.95,
         children: [
           for (final a in _actions)
-            _tile(a['icon'] as String, a['name'] as String, () {
+            _tile(a['icon'] as String, a['name'] as String, () async {
               if (_editing) {
                 _edit(a);
-              } else if (conn.send({'t': 'action_run', 'id': a['id']})) {
+                return;
+              }
+              if (PhoneLock.runsCommand(a) && !await PhoneLock.check('Run “${a['name']}”')) return;
+              if (!mounted) return;
+              if (conn.send({'t': 'action_run', 'id': a['id']})) {
                 haptic(widget.settings.haptics);
                 toast(context, '${a['icon']} ${a['name']}');
               }

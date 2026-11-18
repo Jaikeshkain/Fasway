@@ -36,6 +36,12 @@ class MainActivity : FlutterActivity() {
             notifyLaptop?.let { ClipboardNotification.show(this, it) }
         }
     }
+    @Deprecated("Activity result API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == PhoneLock.REQUEST) PhoneLock.onResult(resultCode == RESULT_OK)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A remote control should not let the phone screen go dark while you use it.
@@ -74,6 +80,14 @@ class MainActivity : FlutterActivity() {
                 "agentUnnotify" -> AgentNotification.hide(this)
             }
             result.success(null)
+        }
+        // Fingerprint / screen lock before risky laptop actions.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/lock").setMethodCallHandler { call, result ->
+            if (call.method == "confirm") {
+                PhoneLock.confirm(this, call.argument<String>("reason") ?: "") { ok -> result.success(ok) }
+            } else {
+                result.notImplemented()
+            }
         }
         // The assistant's replies, read aloud.
         val speechChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "fasway/speech")

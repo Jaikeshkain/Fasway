@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/phone_lock.dart';
 import '../core/connection.dart';
 import '../core/settings.dart';
 import 'common.dart';
@@ -407,6 +408,7 @@ class _ControlsTabState extends State<ControlsTab> with WidgetsBindingObserver {
           color: danger ? const Color(0xFF3A1F24) : null,
           onPress: () async {
             if (confirmText != null && !await confirm(context, label, confirmText, ok: label, danger: danger)) return;
+            if (confirmText != null && !await PhoneLock.check(label.substring(label.indexOf(' ') + 1))) return;
             if (conn.send({'t': 'power', 'a': a}) && mounted) toast(context, '$label sent');
           },
         );

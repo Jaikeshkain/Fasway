@@ -296,10 +296,16 @@ async def _press_keys(env: Env, i: dict) -> str:
 
 
 async def _run_quick_action(env: Env, i: dict) -> str:
-    from ..actions import run_action
+    from ..actions import NotAllowed, run_action
     a = _find_action(env, i["name"])
     if not a:
         raise ToolFailed(f"No quick action named '{i['name']}'. Available: " + ", ".join(x["name"] for x in env.actions.items))
+    check = getattr(env.actions, "check", None)   # a new or changed command is allowed on the laptop first
+    if check is not None:
+        try:
+            await check(a)
+        except NotAllowed:
+            raise ToolFailed(f"Quick action {a['name']} runs a new command that wasn't allowed on the laptop")
     await run_action(a, env.inp, env.sysctl, env.run_sys)
     return f"Ran quick action {a['name']}"
 

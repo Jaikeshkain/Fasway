@@ -13,14 +13,29 @@ Tap **✨** in the Android app and say or type what you want, in English, हि
 - **Everyday sentences without a key** ("can you turn the sound down a bit", "volume 30 aur YouTube kholo", "search cats on YouTube", "battery kitni hai") work from the words that matter. This covers volume, brightness, music, power, opening apps and sites, search and simple typing. If it isn't sure, it does nothing and says so.
 - **Everything else** goes to the AI model you choose, once you add an Anthropic (Claude) or OpenAI (GPT) API key with **AI API key** in the Fasway window on the laptop. Keys are kept in the system's credential store (Windows Credential Manager / macOS Keychain) and never go to the phone. You pay that company directly for what you use.
 - **Model:** choose **Opus 5.5** (smartest), **Haiku 5.5** (fastest and cheapest), **GPT-6 Luna** (fast and cheap) or **GPT-6 Sol** (stronger) on the assistant screen. Each needs its own company's key. With Opus, a request its safety checks decline is automatically retried on Anthropic's fallback model.
-- **Spending limits:** ₹30 per task and ₹150 per day by default; change them in the ⋮ menu. The rupee figures use a fixed rate and our own estimate from token counts, so check your Anthropic console for the exact bill.
+- **Spending limits:** ₹30 per task and ₹150 per day by default; change them in the ⋮ menu. The rupee figures use a fixed rate and our own estimate from token counts, so check your Anthropic or OpenAI console for the exact bill.
+- **Installed apps first:** "open ChatGPT" opens the ChatGPT app if it's installed, and the website only if it isn't.
+- **YouTube:** "lo-fi music chala do" plays the top result; "search … / dikhao" only searches.
+- **Buttons inside apps (Windows):** the assistant can read a window's buttons, menus and text boxes and press or fill them, e.g. "log out of Voice Logger". It never types into password boxes, and buttons like Log out, Delete, Pay or Send ask you first.
+- **Web pages:** it reads pages in your **Windows default browser** (Edge, Chrome or Brave), in the profile you're using. The first time, the browser has to be reopened once with page reading turned on; the assistant asks first, and your tabs come back.
+- **Voice conversation:** the conversation screen keeps listening until you close it, and replies are read aloud.
 
 **What it can't do, whatever it's asked:** run terminal commands, open terminals or script files, delete files, or read your clipboard.
-**What it asks you first:** shutting down, restarting, sleeping or signing out; closing a window; unusual shortcuts; quick actions that run a command; typing into a terminal or a window that looks like a sign-in or payment page. No answer in 2 minutes counts as no, and **STOP** ends a task at once.
+**What it asks you first:** shutting down, restarting, sleeping or signing out; closing a window; unusual shortcuts; quick actions that run a command; pressing risky buttons (log out, delete, pay, send); reopening the browser; typing into a terminal or a window that looks like a sign-in or payment page. No answer in 2 minutes counts as no, and **STOP** ends a task at once.
 
 These limits are enforced by Fasway's code, not by the AI. They can't catch everything: the AI can still type into ordinary windows and open links on its own, so watch what it does on sensitive tasks. Requests sent to the AI include your words, the active window's title and what its tools read (such as the list of open windows). A log of every action is in `data/fasway.log`.
 
-Tests: `python -m unittest tests.test_agent` (uses a fake laptop and scripted AI replies, so it spends nothing).
+## Security
+- **A phone needs your OK on the laptop** before it can connect the first time (see [Pairing](#pairing-and-trusted-phones)).
+- **Confirm it's you (Android app):** restart, shut down, sign out, sleep, quick actions that run a command, and allowing an assistant step first ask for your fingerprint, face or screen lock. After one check, more of these within a minute don't ask again. Turn it off in ⚙ Settings (turning it off asks too). It needs a screen lock on the phone.
+- **New commands are allowed on the laptop:** a quick action that runs a command (the *Run a command* type, or a macro with `cmd` steps) is set up on a phone, so the first time it runs, or after it's changed, the laptop shows **"Run this command?"** with the exact command. After you allow it, it runs without asking until it's changed. Someone with your phone can't add and run a new command without you at the laptop.
+- **Old phones are forgotten:** a phone that hasn't connected for **90 days** is removed from Trusted phones and has to be approved again, so a sold or lost phone stops working by itself.
+- Fasway can run as administrator (see [Notes](#notes)); a trusted phone can then control everything on the laptop. Only approve phones you own.
+
+## Tests
+- Laptop: `python -m unittest tests.test_core tests.test_agent`. These use a fake laptop and scripted AI replies, so they spend nothing.
+- Android app: `flutter test` in `app/`.
+- GitHub runs both on every push. The laptop apps are only built when the laptop tests pass, and the Android APKs are built too.
 
 ## Start
 
@@ -37,6 +52,7 @@ Tests: `python -m unittest tests.test_agent` (uses a fake laptop and scripted AI
 - **On their own, the QR code and link are not enough to control the laptop:** a phone also needs your approval.
 - **Trusted phones** in the Fasway window lists each phone, whether it's connected, and when it was last seen. **Remove** disconnects a phone immediately; it has to be approved again to come back.
 - **New pairing code** only stops old QR codes from *asking* to pair; trusted phones keep working.
+- **After 90 days without connecting**, a phone is forgotten and has to be approved again.
 
 ### The phone link that keeps working
 Each laptop gets its own permanent address, for example **`https://fasway-7uble.local:8443`**, which the QR code uses by default.
@@ -134,6 +150,8 @@ Open the **⌨️ Keyboard** tab and type with your phone keyboard. Every letter
   | Macro (one step per line) | `key win+r` / `wait 400` / `type notepad` / `key enter` / `open …` / `cmd …` |
   | Run a command | `shutdown /h` (runs without a window) |
 
+  A new or changed command is allowed once on the laptop before it runs (see [Security](#security)).
+
 - **Open link on laptop:** paste a link, or tap *Open the link copied on this phone*, and it opens in the laptop's browser. Links in the clipboard list also get a 🌐 button. Only http(s) links are allowed.
 - **Open windows:** every open laptop window with its icon. Tap a row to switch to it; ▁ minimizes, ▢ maximizes or restores, ✕ closes (after you confirm, and the app can still ask to save). On a Mac this lists apps instead of windows.
 
@@ -197,9 +215,12 @@ Differences on Mac:
 ## Sharing ready-made apps (no Python needed)
 | For | File | Built by |
 |---|---|---|
-| Mac, Apple Silicon (M1–M4) | `Fasway-mac-arm64.dmg` | GitHub Actions (`macos-14`) |
+| Mac, Apple Silicon (M1–M4) | `Fasway-mac-arm64.dmg` | GitHub Actions (`macos-15`) |
 | Mac, Intel | `Fasway-mac-x86_64.dmg` | GitHub Actions (`macos-15-intel`) |
 | Windows | `Fasway-windows.zip` → `Fasway.exe` | GitHub Actions, or locally: `packaging\build_windows.bat` |
+| Android | `Fasway-v1.x.x-arm64.apk` (old phones: `-arm32`) | Locally: `app\tool\build_apk.ps1`; GitHub Actions also builds them |
+
+APKs from GitHub are signed with a different key than ones built on your PC, so Android can't install one over the other: uninstall first, or stick to one source.
 
 Mac apps can only be built on a Mac, so GitHub builds them for free:
 1. Push this folder to a GitHub repository.
@@ -218,7 +239,7 @@ Settings for the packaged app are stored in `~/Library/Application Support/Faswa
 
 ## Notes
 - If the QR doesn't open, choose a different **Laptop IP** in the window (your laptop has several network adapters).
-- **New pairing code** disconnects every phone; scan the QR again to reconnect.
+- **New pairing code** makes old QR codes stop working for new phones; phones you already approved keep working.
 - **Admin apps:** Windows blocks every program from controlling apps that run **as Administrator** (Task Manager, admin terminals, installers, Registry Editor) unless that program also runs as Administrator. While such an app is in front, Fasway's touchpad and keyboard do nothing, and the phone shows a warning explaining why.
   - Click **Restart as administrator** in the Fasway window (one UAC prompt). The phone reconnects by itself.
   - Tick **Always start as administrator** to do this automatically every time.
@@ -228,7 +249,11 @@ Settings for the packaged app are stored in `~/Library/Application Support/Faswa
 ```
 fasway/   Python service: server.py, main.py (QR window),
           input_win.py (Windows SendInput), input_mac.py (macOS Quartz), platform_input.py (picks one)
+fasway/agent/  The assistant: runtime.py, intents.py (built-in commands), tools.py, policy.py (approvals),
+          appui.py (buttons in apps), browser_access.py (page reading), llm.py (Claude / GPT)
+app/      Android app (Flutter)
 web/      Phone web app (index.html, app.js, app.css)
+tests/    Laptop tests (test_core.py, test_agent.py)
 packaging/  App builds: build_mac.sh (.app + .dmg), build_windows.bat (.exe), make_icon.py
 .github/workflows/build.yml  Builds Mac + Windows apps on GitHub
 data/     Generated: pairing token, HTTPS certificate (keep private)

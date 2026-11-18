@@ -6,10 +6,15 @@ Types
   keys     shortcut(s), comma separated        e.g. ctrl+shift+esc · win+d · ctrl+c, ctrl+v
   macro    one step per line:                  key win+r / type notepad / wait 400 / key enter / open <target>
   command  run a shell command (no window)     e.g. shutdown /h
+
+Actions that run a shell command (the command type, or a macro with cmd/run steps) are created on the
+phone, so a new or changed command must be allowed once *on the laptop* before it runs: a lost phone
+can't be used to run new commands. The allowed command's hash is kept in the action ("ok").
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 import uuid
@@ -37,10 +42,45 @@ _MAC_DEFAULTS = [
 ]
 
 
+def runs_command(a: dict) -> bool:
+    """Does this action run a shell command?"""
+    if a.get("type") == "command":
+        return True
+    if a.get("type") == "macro":
+        return any(line.strip().partition(" ")[0].lower() in ("cmd", "run") for line in str(a.get("value", "")).splitlines())
+    return False
+
+
+def _command_hash(a: dict) -> str:
+    return hashlib.sha256(f"{a.get('type')}\n{a.get('value', '')}".encode()).hexdigest()
+
+
+class NotAllowed(Exception):
+    """The command wasn't allowed on the laptop."""
+
+
 class QuickActions:
     def __init__(self, data_dir: Path):
         self.path = Path(data_dir) / "actions.json"
         self.items: list[dict] = self._load()
+        # async (action) -> bool: asks on the laptop whether a new or changed command may run.
+        # None (tests, headless) = allowed.
+        self.confirm = None
+
+    def is_allowed(self, a: dict) -> bool:
+        return not runs_command(a) or a.get("ok") == _command_hash(a)
+
+    def allow(self, a: dict):
+        a["ok"] = _command_hash(a)
+        self._save()
+
+    async def check(self, a: dict):
+        """Raise NotAllowed unless the action may run."""
+        if self.is_allowed(a) or self.confirm is None:
+            return
+        if not await self.confirm(a):
+            raise NotAllowed("not allowed on the laptop")
+        self.allow(a)
 
     def _load(self) -> list[dict]:
         try:

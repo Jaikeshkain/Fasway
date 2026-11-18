@@ -1,6 +1,7 @@
 """Trusted phones. A phone proves who it is with its own random key; only a SHA-256 of that key is
 stored (data/devices.json). The QR pairing link alone is not enough: a new phone must be approved
-on the laptop first."""
+on the laptop first. A phone that hasn't connected for EXPIRE_DAYS is forgotten (a sold or lost phone
+stops working by itself) and has to be approved again."""
 from __future__ import annotations
 
 import hashlib
@@ -9,6 +10,8 @@ import json
 import threading
 import time
 from pathlib import Path
+
+EXPIRE_DAYS = 90
 
 
 def _digest(key: str) -> str:
@@ -20,6 +23,7 @@ class DeviceStore:
         self.path = Path(data_dir) / "devices.json"
         self._lock = threading.Lock()
         self.devices: dict[str, dict] = self._load()
+        self.forgotten = self.forget_expired()   # names of phones dropped at start-up, for the log
 
     def _load(self) -> dict[str, dict]:
         try:
@@ -32,8 +36,24 @@ class DeviceStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(list(self.devices.values()), ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def expired(self, d: dict, now: float | None = None) -> bool:
+        seen = d.get("last_seen") or d.get("added") or 0
+        return (now or time.time()) - seen > EXPIRE_DAYS * 86400
+
+    def forget_expired(self) -> list[str]:
+        """Remove phones not seen for EXPIRE_DAYS; returns their names."""
+        with self._lock:
+            old = [i for i, d in self.devices.items() if self.expired(d)]
+            names = [self.devices.pop(i).get("name", "Phone") for i in old]
+            if old:
+                self._save()
+        return names
+
     def verify(self, dev_id: str, key: str) -> bool:
         d = self.devices.get(dev_id)
+        if d and self.expired(d):
+            self.forget_expired()
+            return False
         return bool(d and key and hmac.compare_digest(d["key_hash"], _digest(key)))
 
     def add(self, dev_id: str, key: str, name: str):

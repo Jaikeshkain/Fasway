@@ -168,6 +168,7 @@ class App:
                                    on_clients=lambda n: self.events.put(("clients", n)),
                                    on_local_ip=lambda ip: self.events.put(("local_ip", ip)),
                                    on_pair_request=lambda name, ip, answer: self.events.put(("pair", (name, ip, answer))),
+                                   on_command_request=lambda name, cmd, answer: self.events.put(("command", (name, cmd, answer))),
                                    on_devices=lambda: self.events.put(("devices", None)),
                                    on_file_received=lambda path, phone: self.events.put(("file_received", (path, phone))),
                                    on_link_quality=lambda *a: self.events.put(("link", a)))
@@ -680,8 +681,25 @@ class App:
 
     def _ask_pair(self, name: str, ip: str, answer):
         """'Allow this phone?' - shown even when the main window is hidden in the tray."""
+        self._ask("Fasway – new phone", "📱", "A phone wants to connect", name, f"from {ip}",
+                  "Only allow phones you own: it will be able to control this laptop.", answer,
+                  enter_allows=True, timeout_ms=115_000)   # phone gives up after 2 minutes anyway
+        self.tray.notify(f"{name} wants to connect. Allow or deny it on the laptop.")
+
+    def _ask_command(self, name: str, command: str, answer):
+        """A quick action from the phone wants to run a new or changed command."""
+        shown = command if len(command) <= 400 else command[:400] + "…"
+        self._ask("Fasway – run a command?", "⚠️", "Run this command?", f"Quick action “{name}”", shown,
+                  "This command was set up on a phone. Only allow it if you made it. "
+                  "Once allowed, it runs without asking until it is changed.", answer,
+                  enter_allows=False, timeout_ms=115_000, mono=True)
+        self.tray.notify(f"Quick action “{name}” wants to run a command. Allow or deny it on the laptop.")
+
+    def _ask(self, title: str, icon: str, headline: str, name: str, detail: str, warning: str, answer,
+             enter_allows: bool, timeout_ms: int, mono: bool = False):
+        """A small always-on-top Allow / Deny window (also when the main window is hidden in the tray)."""
         win = tk.Toplevel(self.root)
-        win.title("Fasway – new phone")
+        win.title(title)
         win.configure(bg=ui.PANEL, padx=int(8 * self.k))
         win.resizable(False, False)
         ui.dark_title_bar(win)
@@ -695,31 +713,32 @@ class App:
                 win.destroy()
 
         k = self.k
-        tk.Label(win, text="📱", font=(ui.FONT, 30), fg=ui.TEXT, bg=ui.PANEL).pack(pady=(int(18 * k), 0))
-        tk.Label(win, text="A phone wants to connect", font=(ui.FONT, 14, "bold"), fg=ui.TEXT,
+        tk.Label(win, text=icon, font=(ui.FONT, 30), fg=ui.TEXT, bg=ui.PANEL).pack(pady=(int(18 * k), 0))
+        tk.Label(win, text=headline, font=(ui.FONT, 14, "bold"), fg=ui.TEXT,
                  bg=ui.PANEL).pack(padx=int(24 * k), pady=(int(4 * k), int(6 * k)))
         tk.Label(win, text=name, font=(ui.FONT, 11, "bold"), fg=ui.ACCENT, bg=ui.PANEL).pack()
-        tk.Label(win, text=f"from {ip}", font=(ui.FONT, 9), fg=ui.MUTED, bg=ui.PANEL).pack()
-        tk.Label(win, text="Only allow phones you own: it will be able to control this laptop.",
-                 font=(ui.FONT, 9), fg=ui.WARN, bg=ui.PANEL, wraplength=int(300 * k),
+        tk.Label(win, text=detail, font=("Consolas", 10) if mono else (ui.FONT, 9), fg=ui.TEXT if mono else ui.MUTED,
+                 bg=ui.PANEL, wraplength=int(340 * k), justify="left" if mono else "center").pack(padx=int(24 * k))
+        tk.Label(win, text=warning, font=(ui.FONT, 9), fg=ui.WARN, bg=ui.PANEL, wraplength=int(300 * k),
                  justify="center").pack(padx=int(24 * k), pady=(int(12 * k), int(8 * k)))
         b = tk.Frame(win, bg=ui.PANEL)
         b.pack(pady=(int(4 * k), int(20 * k)))
-        ui.Button(b, "Deny", lambda: reply(False)).pack(side="left", padx=int(6 * k))
+        deny = ui.Button(b, "Deny", lambda: reply(False))
+        deny.pack(side="left", padx=int(6 * k))
         allow = ui.Button(b, "Allow", lambda: reply(True), kind="primary")
         allow.pack(side="left", padx=int(6 * k))
-        win.bind("<Return>", lambda e: reply(True))
+        if enter_allows:
+            win.bind("<Return>", lambda e: reply(True))
         win.bind("<Escape>", lambda e: reply(False))
         win.protocol("WM_DELETE_WINDOW", lambda: reply(False))
-        win.after(115_000, lambda: reply(False))   # phone gives up after 2 minutes anyway
+        win.after(timeout_ms, lambda: reply(False))
         win.update_idletasks()
         x = win.winfo_screenwidth() // 2 - win.winfo_width() // 2
         y = win.winfo_screenheight() // 3 - win.winfo_height() // 2
         win.geometry(f"+{x}+{y}")
         win.lift()
         win.focus_force()
-        allow.focus_set()
-        self.tray.notify(f"{name} wants to connect. Allow or deny it on the laptop.")
+        (allow if enter_allows else deny).focus_set()
 
     def show(self):
         self.root.deiconify()
@@ -757,6 +776,8 @@ class App:
                     self._ai_key_changed(val)
                 elif kind == "pair":
                     self._ask_pair(*val)
+                elif kind == "command":
+                    self._ask_command(*val)
                 elif kind == "status":
                     if val == "running":
                         self._update_status()

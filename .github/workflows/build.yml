@@ -4,13 +4,64 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write   # needed to attach files to a GitHub Release on tags
 
 jobs:
+  # ---- tests first: nothing is built when a test fails ----
+  laptop-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -q --disable-pip-version-check -r requirements.txt
+      # fake laptop and scripted AI replies: no real input, no network, no cost
+      - run: python -m unittest tests.test_core tests.test_agent -v
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.7"   # same as the local build (app/tool/build_apk.ps1)
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: Build APKs
+        run: |
+          v=$(sed -n 's/^version: *\([0-9.]*\)+\([0-9]*\).*/\1 \2/p' pubspec.yaml)
+          set -- $v
+          flutter build apk --release --split-per-abi --dart-define=FASWAY_VERSION=$1 --dart-define=FASWAY_BUILD=$2
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Fasway-v$1-arm64.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/Fasway-v$1-arm32.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fasway-android
+          path: app/dist/*.apk
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/dist/*.apk
+
   mac:
+    needs: laptop-tests
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +85,7 @@ jobs:
           files: dist/Fasway-mac-*.dmg
 
   windows:
+    needs: laptop-tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

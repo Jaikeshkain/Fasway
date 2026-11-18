@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/phone_lock.dart';
 import '../core/app_state.dart';
 import 'common.dart';
 import 'whats_new.dart';
@@ -66,6 +67,21 @@ void showSettings(BuildContext context, AppState s, {required VoidCallback onPai
                 onChanged: (v) {
                   Fx.select();
                   st.set('clipNotify', v);
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Confirm it\'s you'),
+                subtitle: const Text(
+                    'Fingerprint, face or screen lock before restart, shut down, sign out, sleep, commands '
+                    'and allowing assistant steps. Needs a screen lock on this phone.',
+                    style: TextStyle(color: C.muted, fontSize: 12)),
+                value: st.phoneLock,
+                onChanged: (v) async {
+                  Fx.select();
+                  // turning it off is itself protected, or a thief could just switch it off
+                  if (!v && !await PhoneLock.check('Turn off "Confirm it\'s you"')) return;
+                  st.set('phoneLock', v);
                 },
               ),
               const Text('Screen preview quality', style: TextStyle(color: C.muted, fontSize: 14)),

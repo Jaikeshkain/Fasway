@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import '../core/phone_lock.dart';
 import '../core/agent.dart';
 import '../core/connection.dart';
 import '../core/settings.dart';
@@ -1107,18 +1108,18 @@ class _ApprovalCardState extends State<_ApprovalCard> {
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton(
-                  onPressed: () {
+                  onPressed: () async {
                     Fx.heavy();
-                    widget.agent.answer(x, true);
+                    if (await PhoneLock.check(x.action)) widget.agent.answer(x, true);
                   },
                   child: const Text('Allow'),
                 ),
               ),
             ]),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 Fx.heavy();
-                widget.agent.answer(x, true, remember: true);
+                if (await PhoneLock.check(x.action)) widget.agent.answer(x, true, remember: true);
               },
               child: const Text('Allow, and don\'t ask again for this same step', style: TextStyle(fontSize: 12)),
             ),
